@@ -31,14 +31,14 @@ The script creates its own SSH key (`~/.ssh/glueops-acc-lab`) and registers it i
 From the repo root:
 
 ```sh
-scripts/glueops-acc-lab.sh all        # about 18-20 minutes; or run the stages one at a time, in this order
+scripts/glueops-acc-lab.sh all        # about 15-20 minutes; or run the stages one at a time, in this order
 ```
 
 | Stage | What it does | Time |
 | ----- | ------------ | ---- |
 | `rescue` | registers the lab key, boots both servers into Hetzner's rescue system (hardware reset) | 1-2 min |
-| `install` | `installimage`: Debian 13 on software RAID 1 (UEFI layout), reboots into it | 6 min |
-| `pve` | Proxmox VE 9 from the no-subscription repo; Proxmox kernel; key-only SSH | 10 min |
+| `install` | `installimage`: Debian 13 on software RAID 1 (UEFI layout), reboots into it | 5-6 min |
+| `pve` | Proxmox VE 9 from the no-subscription repo; Proxmox kernel; key-only SSH | 8-10 min |
 | `network` | `vmbr1` on each node: 10.10.10.1/24, NAT to the internet, DHCP with dnsmasq | seconds |
 | `cluster` | `pve1` creates the cluster `glueops-acc`, `pve2` joins over SSH | 1 min |
 | `storage` | `local` gets the `import`, `images`, `iso` (and `snippets`) content types | seconds |
@@ -88,10 +88,12 @@ You never need to open `testacc.env` or Robot to find a node.
 | `install` stops with "isn't in rescue" on a re-run | A previous run already rebooted that node into Debian. Run `rescue install` to start the install over. |
 | `install`: installimage prints only `Cancelled.` | The real reason is in `/root/debug.txt` on the server (the script prints its error lines). `ESP missing`: the layout needs an EFI partition, which the script includes. |
 | A node doesn't come back after a reboot | These servers sometimes hang on a soft reboot. The script waits 8 minutes, then sends up to 2 hardware resets through Robot. If it still fails, rerun `rescue` and look at the server in Robot. |
+| Any stage: "Robot has no server …" | The servers in `LAB_SERVERS` were cancelled (or the numbers are wrong). Ordering servers costs money, so a human does it: they order two as described in [What you need](#what-you-need) and put their numbers in `LAB_SERVERS`. Then run `all`. |
+| Any stage: "Robot request … failed" | Wrong or rotated Robot credentials in `~/.config/hetzner-robot.env`, or no network. |
 | `rescue` times out | Rescue mode may not have armed. Rerun the stage, which re-arms it. If it keeps failing, check the server's status in Robot. |
 | `cluster`: `Permission denied` writing `authorized_keys` | `/etc/pve` is read-only for a moment after `pvecm create`. The script waits for quorum; rerun the stage. |
-| `check`: `pve1 has no vmbr1` | A pending `/etc/network/interfaces.new` left by the Proxmox install hides the bridge, and would drop it at the next boot. The `network` stage removes it; rerun `network check`. |
-| `check`: 401 or connection refused | The token or the firewall: rerun `token`, or `firewall` with `LAB_ALLOW_IPS` set to the test machine's IP. |
+| `check`: `pve1 vmbr1: missing` | A pending `/etc/network/interfaces.new` left by the Proxmox install hides the bridge, and would drop it at the next boot. The `network` stage removes it; rerun `network check`. |
+| `check` fails | It prints which fix to try. If the nodes answer SSH, it's the token or the firewall: rerun `firewall token check` (add the test machine with `LAB_ALLOW_IPS` if it's another machine). If they don't, the lab is down or gone: rebuild with `all`. |
 | Test: the bootstrap times out waiting for the guest agent | The VM got no address or internet access. On the node, `journalctl -u dnsmasq` should show a DHCPACK, `iptables -t nat -L POSTROUTING` should show MASQUERADE, and `/proc/sys/net/ipv4/ip_forward` should be `1`. |
 | Test: only 2 subtests ran | `PROXMOX_VE_ACC_NODE_2_NAME` is missing from `testacc.env`; rerun `token`. |
 | `leftovers` lists VMs or files (after an interrupted test run) | Delete them: `scripts/glueops-acc-lab.sh ssh pve1 qm destroy <vmid> --purge` for the VMs, and `ssh <node> pvesm free <volume>` for the files on each node. Then rerun `leftovers`. |

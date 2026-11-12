@@ -123,20 +123,23 @@ signs the assets, uploads them to the draft and publishes it, then attests them.
 assets: the Terraform Registry ingests on publish, and the OpenTofu registry, which polls tags, skips a tag until its
 assets can be downloaded.
 
-1. **Check the version** in the release PR. An upstream `Release-As:` footer would force its number on us:
+1. **Check the version** in the release PR. List any `Release-As:` footers since the last release, with the commit
+   each is in:
    ```sh
    git fetch glueops   # the sync was merged on GitHub; without this the check misses its commits
    last=$(gh release view --repo GlueOps/terraform-provider-proxmox --json tagName -q .tagName 2>/dev/null) &&
      git fetch --no-tags glueops tag "$last" || last=$(sed -n 's/.*"bootstrap-sha": *"\([0-9a-f]*\)".*/\1/p' release-please-config.json)
-   git log --format=%B "$last..glueops/main" | grep -i '^release-as:' || echo "no Release-As footers"
+   git log -i --grep='^release-as:' --format='%h %s%n%b' "$last..glueops/main" | grep -iE '^[0-9a-f]{7,} |^release-as:' ||
+     echo "no Release-As footers"
    ```
-   If one shows up (or the version is wrong for any reason), merge a small PR whose description ends with
-   `Release-As: X.Y.Z` (the version you want); release-please then proposes that version. Upstream entries in the notes keep bpg's `(#NNNN)`
+   A footer in one of **our own** PRs that sets the version we want is fine; that's how the fork picks a version.
+   Act only if a footer came in with a sync (an upstream commit), or the proposed version isn't the one you want: then
+   merge a small PR whose description ends with `Release-As: X.Y.Z` (the version you want). Upstream entries in the notes keep bpg's `(#NNNN)`
    numbers, which link to this repo and 404; the commit links are right.
 2. **Run the release gate** (below). It's required before every release PR is merged. Post the result as a comment
    on the release PR in this exact format, and never paste raw output (it can contain lab addresses):
    ```text
-   Release gate for X.Y.Z at <commit>
+   Release gate for X.Y.Z at <full SHA of glueops/main>
    acceptance: --- PASS ×3 (TestAccResourceCloudInitBootstrap subtests)
    leftovers: none
    ```
@@ -183,9 +186,11 @@ do when a step fails.
    ```sh
    git fetch glueops && git switch --detach glueops/main
    ```
-   That commit is the `<commit>` in the gate comment.
-2. Make sure the lab is up: `scripts/glueops-acc-lab.sh check`. If it fails, or `testacc.env` is missing, rebuild the
-   lab with `scripts/glueops-acc-lab.sh all` (about 20 minutes; it wipes the two lab servers, which hold nothing else).
+   Its full SHA goes in the gate comment. That's the released code, not the release PR's head commit, which only
+   bumps version strings.
+2. Make sure the lab is up: `scripts/glueops-acc-lab.sh check`. If it fails, it says which fix to try: either the
+   quick one (`firewall token check`, seconds) when the nodes are up, or a rebuild (`scripts/glueops-acc-lab.sh all`,
+   15-20 minutes; it wipes the two lab servers, which hold nothing else) when they're down or gone.
 3. Run the tests, then check that nothing was left behind:
    ```sh
    scripts/glueops-dev.sh ./testacc TestAccResourceCloudInitBootstrap
