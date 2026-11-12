@@ -79,6 +79,8 @@ these steps, but a human makes the decisions marked **you**.
      permissions, secrets or risky triggers to a kept workflow. Those run in our release job or CI. **You** read the
      printed diff, then re-run with `--ack`.
    - Exit 4: feature files conflict. Take upstream's version, re-apply our lines, `git add`, and re-run `sync`.
+   - Any other non-zero exit is a `go` or `make docs` error, usually from a hand-resolved feature file. Fix it and
+     re-run `sync`.
    - Exit 3 with `DRIFT:`: something isn't covered.
      - A new upstream workflow or agent file: delete it (`git rm`) and add a `deleted` entry. **You** decide if it
        should be `kept` instead.
