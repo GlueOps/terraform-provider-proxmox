@@ -97,6 +97,7 @@ check_tree() {
 		kind=$(kind_of "$list" "$path")
 		case "$kind:$status" in
 		owned:A | owned:M | feature:A | feature:M | deleted:D) ;;
+		:D) fail "$status $path: not in $ALLOWLIST (if you deleted it on purpose, add a 'deleted' entry)" ;;
 		:*) fail "$status $path: not in $ALLOWLIST" ;;
 		kept:*) fail "$status $path: listed as kept, so it must equal upstream" ;;
 		*) fail "$status $path: listed as $kind, which doesn't allow $status" ;;
@@ -187,13 +188,22 @@ cmd_sync() {
 	git merge-base --is-ancestor "$old" "$new" || die "$tag is not newer than the recorded upstream tag"
 	list=$(entries HEAD)
 
+	# Owned files always keep our version, even when upstream's change merged in without a conflict
+	# (CHANGELOG.md does). Upstream's change is then reviewed from the diff printed below.
+	awk -F'\t' '$1 == "owned" && $2 !~ /\/$/ { print $2 }' <<<"$list" | while read -r path; do
+		if git cat-file -e "HEAD:$path" 2>/dev/null; then
+			git checkout HEAD -- "$path"
+			git add -- "$path"
+		fi
+	done
+
 	while read -r path; do
 		kind=$(kind_of "$list" "$path")
 		if rebrand_targets "$tag" | grep -qxF "$path" || [ "$path" = go.mod ] || [ "$path" = go.sum ]; then
 			continue # rebuilt below
 		fi
 		case "$kind" in
-		owned) git checkout --ours -- "$path" && git add -- "$path" ;;
+		owned) ;; # restored above
 		deleted) git rm -q -f -- "$path" ;;
 		*) left+=("$path") ;;
 		esac
