@@ -1,4 +1,5 @@
-# GlueOps fork: release-please opens/merges the release PR, then goreleaser signs and uploads the assets.
+# GlueOps fork: release-please opens the release PR; merging it creates the tag and a DRAFT release. goreleaser then
+# signs and uploads the assets to that draft and publishes it, so a release is never visible without its assets.
 # See FORK.md. This file is owned by the fork; upstream changes to it are reviewed per sync, never merged blindly.
 name: Release Please
 
@@ -22,6 +23,8 @@ jobs:
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
+      sha: ${{ steps.release.outputs.sha }}
+      release_id: ${{ steps.release.outputs.id }}
     steps:
       # An App token (not GITHUB_TOKEN) so the release PR runs PR checks; the App also bypasses the v* tag ruleset.
       - name: Generate App token
@@ -44,7 +47,7 @@ jobs:
           manifest-file: .release-please-manifest.json
 
   # Separate job so the signing key only enters runs that actually release, and a failure can be retried with
-  # "Re-run failed jobs" (job 1's outputs are kept). Delete any assets it already uploaded first (see FORK.md).
+  # "Re-run failed jobs" while the release is still a draft (job 1's outputs are kept). See FORK.md.
   goreleaser:
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'
@@ -62,6 +65,44 @@ jobs:
           ref: ${{ needs.release-please.outputs.tag_name }}
           fetch-depth: 0
           persist-credentials: false
+
+      # These checks run before the signing key is loaded.
+      - name: Check the tag is the released commit
+        env:
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+          SHA: ${{ needs.release-please.outputs.sha }}
+        run: |
+          got=$(git rev-parse "$TAG^{commit}")
+          if [ "$got" != "$SHA" ]; then
+            echo "::error::$TAG points at $got, but release-please released $SHA"
+            exit 1
+          fi
+
+      - name: Check the release is still release-please's draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+          RELEASE_ID: ${{ needs.release-please.outputs.release_id }}
+        run: |
+          releases=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            -q '.[] | select(.tag_name == env.TAG or .name == env.TAG) | "\(.id) \(.draft)"')
+          if [ "$releases" != "$RELEASE_ID true" ]; then
+            echo "::error::Expected exactly one release for $TAG, the draft $RELEASE_ID; found: ${releases:-none}"
+            echo "::error::If it is already published, don't re-run this job (see FORK.md, Emergency release)."
+            exit 1
+          fi
+
+      # goreleaser uses upstream's .goreleaser.yaml, plus: upload to release-please's draft (not a new release), and
+      # replace assets a failed earlier attempt left on it. The checks stop an upstream change from breaking that.
+      - name: Prepare the goreleaser config
+        run: |
+          yq '.release.use_existing_draft = true | .release.replace_existing_artifacts = true' .goreleaser.yaml \
+            > "$RUNNER_TEMP/goreleaser.yaml"
+          yq -e '.release.use_existing_draft == true and (.release.draft // false) == false
+            and (.release.replace_existing_draft // false) == false
+            and (.release.disable // false) == false and (.release.skip_upload // false) == false
+            and ((.release.mode // "keep-existing") == "keep-existing")
+            and ((.release.name_template // "{{.Tag}}") == "{{.Tag}}")' "$RUNNER_TEMP/goreleaser.yaml" > /dev/null
 
       # go.mod pins x.y.0; build with the newest x.y patch (as upstream's releases do), not the bare minimum.
       - name: Read Go version
@@ -86,8 +127,9 @@ jobs:
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           version: v2.20.1
-          # Pinned so a .goreleaser.yml or .config/goreleaser.yaml added upstream can't take precedence.
-          args: release --clean --config .goreleaser.yaml
+          # An explicit config, so a .goreleaser.yml or .config/goreleaser.yaml added upstream can't take precedence.
+          # ${{ }} rather than $RUNNER_TEMP: the action runs goreleaser without a shell.
+          args: release --clean --config ${{ runner.temp }}/goreleaser.yaml
         env:
           GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
           GITHUB_TOKEN: ${{ github.token }}
