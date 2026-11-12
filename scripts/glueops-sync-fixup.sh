@@ -424,7 +424,7 @@ self_test() {
 	if [[ $got != *"github.com/diskfs/go-diskfs@"* ]]; then echo "FAIL go pin for a module upstream lacks: '$got'"; return 1; fi
 	echo "ok   go module pins"
 
-	docker run --rm -v "$ROOT/scripts":/s:ro koalaman/shellcheck:v0.10.0 /s/glueops-sync-fixup.sh /s/glueops-dev.sh &&
+	docker run --rm -v "$ROOT/scripts":/s:ro koalaman/shellcheck:v0.10.0 /s/glueops-sync-fixup.sh /s/glueops-dev.sh /s/glueops-acc-lab.sh &&
 		echo "ok   shellcheck"
 }
 

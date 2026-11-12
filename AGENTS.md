@@ -26,7 +26,11 @@ scripts/glueops-dev.sh go test ./...
 scripts/glueops-dev.sh lint                      # golangci-lint at the Makefile's version
 scripts/glueops-dev.sh make docs                 # regenerate docs; CI fails if this leaves a diff
 scripts/glueops-sync-fixup.sh --self-test        # after changing fork tooling
+scripts/glueops-acc-lab.sh all                   # rebuild the release gate lab (wipes the 2 lab servers); runs on the host
 ```
+
+The release gate (FORK.md) runs acceptance tests against a Hetzner lab; `.glueops/release-gate-lab.md` covers building
+it and what to do when a stage fails.
 
 Don't use `make lint` or `make build` on the host: they install or run tools outside Docker.
 
