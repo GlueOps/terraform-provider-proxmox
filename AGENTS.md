@@ -76,6 +76,10 @@ These are settled. Don't re-raise them in reviews.
 - The release-please setup deliberately differs from the GlueOps release-please skill's fleet convention (workflow name,
   hidden chore, own changelog sections), because it has to coexist with upstream's files. Don't "reconcile" it.
 - The release App token asks only for contents and pull-requests write; the org App has nothing more.
+- Releases are created as drafts and published by goreleaser only after every asset is uploaded, through a derived
+  goreleaser config (`use_existing_draft`) so upstream's `.goreleaser.yaml` stays unedited.
+- Never delete the `feat/cloudinit-iso` branch: it's the head of bpg PR #3260, and deleting it closes that PR. The
+  `protect-upstream-pr-branch` ruleset blocks deletion.
 - Actions are pinned to commit SHAs by hand. `sha_pinning_required` is off, and Renovate is disabled in the fork.
 - The release gate (acceptance tests plus a lab plan) runs locally and never in GitHub, so no PVE credentials go into the repo.
 - Release 1 of a consuming module may not change any `proxmox_virtual_environment_vm`, because an in-place update reboots nodes.

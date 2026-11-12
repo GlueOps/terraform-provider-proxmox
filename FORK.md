@@ -117,9 +117,10 @@ these steps, but a human makes the decisions marked **you**.
 
 ## Releasing
 
-release-please keeps a release PR (`chore(main): release X.Y.Z`) open against `main`. Merging it creates the tag and
-GitHub release. A second job in `.github/workflows/release-please.yml` then builds, signs, uploads and attests the
-assets.
+release-please keeps a release PR (`chore(main): release X.Y.Z`) open against `main`. Merging it creates the tag and a
+**draft** release. A second job in `.github/workflows/release-please.yml` then checks the tag and the draft, builds and
+signs the assets, uploads them to the draft and publishes it, then attests them. A release is never visible without its
+assets, so the registries (which act on publish) always see a complete one.
 
 1. **Check the version** in the release PR. An upstream `Release-As:` footer would force its number on us:
    ```sh
@@ -143,6 +144,7 @@ assets.
 4. **Verify the assets** once the goreleaser job finishes: a zip per platform, `SHA256SUMS`, `SHA256SUMS.sig` and
    `manifest.json`.
    ```sh
+   gh api repos/GlueOps/terraform-provider-proxmox/releases/tags/vX.Y.Z -q '{draft, immutable}'   # draft must be false
    gh release download vX.Y.Z --repo GlueOps/terraform-provider-proxmox --dir /tmp/rel && cd /tmp/rel
    curl -fsSL https://raw.githubusercontent.com/opentofu/registry/main/keys/g/glueops/autoglue/provider-1773006671.asc | gpg --import
    gpg --fingerprint 52319649A2976E57   # must end in 5231 9649 A297 6E57
@@ -204,22 +206,32 @@ The gate runs locally, never in GitHub, so no PVE credentials ever reach the rep
 
 ### Emergency release
 
-- **The goreleaser job failed on something transient** (network, a runner hiccup):
-  1. If it uploaded some assets, delete them all:
-     ```sh
-     for a in $(gh release view vX.Y.Z --repo GlueOps/terraform-provider-proxmox --json assets -q '.assets[].name'); do
-       gh release delete-asset vX.Y.Z "$a" --yes --repo GlueOps/terraform-provider-proxmox
-     done
-     ```
-  2. Use **Re-run failed jobs** on the workflow run (within 30 days). A new run won't release again, because
-     release-please already created the release.
-- **It fails for a real reason** (a config or code problem): fix forward. Mark the broken release as a pre-release
-  (`gh release edit vX.Y.Z --prerelease`) so nobody picks it up, merge the fix as a `fix:` PR, and release the next
-  patch version.
-- **Last resort, the workflow can't run at all:** an admin with the offline copy of the GlueOps key works in a **fresh
-  clone of the fork** (goreleaser publishes to the repo `origin` points at, which is bpg in the clone setup above):
-  `git clone https://github.com/GlueOps/terraform-provider-proxmox.git && cd terraform-provider-proxmox && git checkout vX.Y.Z`,
-  then `goreleaser release --clean --config .goreleaser.yaml` with
+First find out whether the release is still a draft:
+
+```sh
+gh api --paginate "repos/GlueOps/terraform-provider-proxmox/releases?per_page=100" \
+  -q '.[] | select(.tag_name == "vX.Y.Z") | "\(.id) draft=\(.draft)"'
+```
+
+**Never delete a published release.** Once releases are immutable, its tag can never be used again.
+
+- **Still a draft, the goreleaser job failed on something transient** (network, a runner hiccup): use **Re-run failed
+  jobs** on the workflow run (within 30 days). goreleaser replaces any assets the failed attempt left on the draft.
+- **Still a draft, it fails for a real reason** (a config or code problem): delete the draft
+  (`gh api -X DELETE repos/GlueOps/terraform-provider-proxmox/releases/<id>`) and leave the tag; that version is simply
+  skipped. Merge the fix as a `fix:` PR and release the next patch version.
+- **Published, but a later step (attest) failed:** don't re-run; the guard stops it anyway, and a re-run would rebuild
+  assets that no longer match. The release is complete and signed; it just has no build attestation, so skip
+  `gh attestation verify` for it.
+- **Published and broken:** fix forward. Mark it as a pre-release (`gh release edit vX.Y.Z --prerelease`; that's still
+  allowed on immutable releases) so nobody picks it up, merge the fix as a `fix:` PR, and release the next patch.
+- **Last resort, the workflow can't run at all** (the release must still be a draft): an admin with the offline copy of
+  the GlueOps key works in a **fresh clone of the fork** (goreleaser publishes to the repo `origin` points at, which is
+  bpg in the clone setup above):
+  `git clone https://github.com/GlueOps/terraform-provider-proxmox.git && cd terraform-provider-proxmox && git checkout vX.Y.Z`.
+  Write the same derived config as the workflow, **outside the clone** (goreleaser refuses a dirty tree):
+  `yq '.release.use_existing_draft = true | .release.replace_existing_artifacts = true' .goreleaser.yaml > /tmp/goreleaser.yaml`,
+  then run `goreleaser release --clean --config /tmp/goreleaser.yaml` with
   `GPG_FINGERPRINT=$(gpg --with-colons --fingerprint 52319649A2976E57 | awk -F: '/^fpr/ { print $10; exit }')` and a
   `GITHUB_TOKEN` that's fine-grained, limited to this repo with contents write, short-lived, and revoked afterwards.
   That puts the signing key on a workstation, and the release gets no attestation, so skip the
