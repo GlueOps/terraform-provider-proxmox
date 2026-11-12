@@ -24,6 +24,8 @@ deleted .claude/
 deleted .cursorrules
 deleted .devcontainer/
 deleted .githooks/
+deleted .github/CODEOWNERS
+deleted .github/SECURITY.md
 deleted .github/workflows/link-check.yml
 deleted .github/workflows/project-automation.yml
 deleted .github/workflows/publish.yml
