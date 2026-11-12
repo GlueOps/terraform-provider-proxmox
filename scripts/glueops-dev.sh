@@ -19,6 +19,9 @@ run_args=(
   # --init forwards Ctrl+C/SIGTERM, so a killed run (e.g. acceptance tests) doesn't keep running.
   --rm --init --user "$(id -u):$(id -g)"
   -v "$root":/w -w /w
+  # Code run here (go generate, tests, tools) comes from upstream syncs. Keep it from writing git hooks or
+  # config that would run on the host, or from editing the fork tooling the host runs next.
+  -v "$root/.git":/w/.git:ro -v "$root/scripts":/w/scripts:ro -v "$root/.glueops":/w/.glueops:ro
   -e HOME=/tmp
   -e GOTOOLCHAIN=local
   -e GOMODCACHE=/w/.gocache/mod

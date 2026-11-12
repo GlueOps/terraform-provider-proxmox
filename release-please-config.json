@@ -36,6 +36,21 @@
                     "hidden": false
                 },
                 {
+                    "type": "deps",
+                    "section": "Dependencies",
+                    "hidden": false
+                },
+                {
+                    "type": "perf",
+                    "section": "Performance",
+                    "hidden": false
+                },
+                {
+                    "type": "revert",
+                    "section": "Reverts",
+                    "hidden": false
+                },
+                {
                     "type": "chore",
                     "section": "Miscellaneous",
                     "hidden": true

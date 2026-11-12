@@ -4,7 +4,7 @@
 #   scripts/glueops-sync-fixup.sh sync <TAG> [--ack]   finish a merge of upstream <TAG>: auto-resolve routine
 #                                                      conflicts, rebrand, fix go.mod, make docs, then check
 #   scripts/glueops-sync-fixup.sh rebrand [TAG]        rebuild the rebranded files from upstream TAG
-#   scripts/glueops-sync-fixup.sh check [TAG] [--ack]  check the working tree against upstream TAG
+#   scripts/glueops-sync-fixup.sh check [TAG]          check the working tree against upstream TAG
 #   scripts/glueops-sync-fixup.sh --self-test [TAG]    prove the checks catch drift (run after editing this file)
 #
 # TAG defaults to the upstream tag recorded in .glueops/upstream-tag.
@@ -26,7 +26,7 @@ GUARDED=(.goreleaser.yaml terraform-registry-manifest.json)
 # shellcheck disable=SC2016 # literal Markdown backticks
 INDEX_NOTE='-> **GlueOps fork.** This is the GlueOps fork of [bpg/proxmox](https://registry.terraform.io/providers/bpg/proxmox/latest), adding the `proxmox_cloudinit_bootstrap` resource. Use the full source address `registry.terraform.io/GlueOps/proxmox` with Terraform and OpenTofu. Versions are the fork'"'"'s own; see [FORK.md](https://github.com/GlueOps/terraform-provider-proxmox/blob/main/FORK.md).'
 # shellcheck disable=SC2016 # literal Markdown backticks
-README_NOTE='> **GlueOps fork** of [bpg/terraform-provider-proxmox](https://github.com/bpg/terraform-provider-proxmox), published as `registry.terraform.io/GlueOps/proxmox` with the added `proxmox_cloudinit_bootstrap` resource. See [FORK.md](FORK.md).'
+README_NOTE='> **GlueOps fork** of [bpg/terraform-provider-proxmox](https://github.com/bpg/terraform-provider-proxmox), published as `registry.terraform.io/GlueOps/proxmox` with the added `proxmox_cloudinit_bootstrap` resource. See [FORK.md](FORK.md). The badges and docs links below are upstream'"'"'s.'
 
 die() { echo "glueops-sync: $*" >&2; exit 1; }
 fail() { echo "DRIFT: $*" >&2; FAILS=$((FAILS + 1)); }
@@ -169,14 +169,19 @@ check_tree() {
 	done <<<"$agent_files"
 
 	while read -r path; do
-		if ! cmp -s <(git show "$tag:$path" | rebrand_stream "$path" "$version") <(git show "$tree:$path"); then
+		if ! git show "$tag:$path" | rebrand_stream "$path" "$version" >/dev/null 2>&1; then
+			fail "$path: upstream changed a line the rebrand anchors on; update rebrand_stream in $0"
+		elif ! cmp -s <(git show "$tag:$path" | rebrand_stream "$path" "$version") <(git show "$tree:$path"); then
 			fail "$path: differs from upstream's copy rebranded (run: $0 rebrand $tag)"
 		fi
 	done <<<"$targets"
 
-	if ! cmp -s <(git show "$tree:release-please-config.json" | sed -n '/"extra-files"/,/]/p' | sed -n 's/^[[:space:]]*"\([^"]*\)",*$/\1/p' | LC_ALL=C sort) \
-		<(git grep -l x-release-please-version "$tree" -- "${REBRAND_SCOPE[@]}" | sed "s|^$tree:||" | LC_ALL=C sort); then
-		fail "release-please-config.json extra-files doesn't match the files carrying x-release-please-version"
+	local listed marked
+	listed=$(git show "$tree:release-please-config.json" | sed -n '/"extra-files"/,/]/p' | sed -n 's/^[[:space:]]*"\([^"]*\)",*$/\1/p' | LC_ALL=C sort)
+	marked=$(git grep -l x-release-please-version "$tree" -- "${REBRAND_SCOPE[@]}" | sed "s|^$tree:||" | LC_ALL=C sort)
+	if [ "$listed" != "$marked" ]; then
+		fail "release-please-config.json extra-files doesn't match the files carrying x-release-please-version: $(
+			diff <(echo "$listed") <(echo "$marked") | sed -n 's/^> /add /p; s/^< /remove /p' | tr '\n' ' ')"
 	fi
 
 	[ "$FAILS" -eq 0 ] || return 3
@@ -198,7 +203,7 @@ guard_upstream() {
 	d=$(git diff "$old" "$new" -- ${kept[@]+"${kept[@]}"})
 	if [ ${#kept[@]} -gt 0 ] && [ -n "$d" ]; then
 		printf '%s\n' "$d" >&2
-		echo "GUARD: upstream changed a kept workflow (${kept[*]})" >&2
+		echo "GUARD: upstream changed a kept workflow ($(git diff --name-only "$old" "$new" -- "${kept[@]}" | tr '\n' ' '))" >&2
 		hits=$((hits + 1))
 	fi
 	if [ "$hits" -gt 0 ] && [ "$ack" != yes ]; then
@@ -208,16 +213,21 @@ guard_upstream() {
 }
 
 apply_rebrand() {
-	local tag=$1 version path
+	local tag=$1 stage=${2:-no} version path
 	version=$(manifest_version HEAD)
 	while read -r path; do
-		git show "$tag:$path" | rebrand_stream "$path" "$version" >"$path.glueops-tmp"
+		if ! git show "$tag:$path" | rebrand_stream "$path" "$version" >"$path.glueops-tmp"; then
+			rm -f "$path.glueops-tmp"
+			echo "glueops-sync: $path: upstream changed a line the rebrand anchors on; update rebrand_stream in $0" >&2
+			exit 3
+		fi
 		mv "$path.glueops-tmp" "$path"
+		if [ "$stage" = yes ]; then git add -- "$path"; fi
 	done < <(rebrand_targets "$tag")
 }
 
 cmd_sync() {
-	local tag=$1 ack=$2 old new list targets path kind diskfs reviewed left=()
+	local tag=$1 ack=$2 old new list targets path kind diskfs reviewed log left=()
 	require_tag "$tag"
 	new=$(git rev-parse "$tag^{commit}")
 	[ "$(git rev-parse -q --verify MERGE_HEAD)" = "$new" ] || die "run this during 'git merge $tag' (MERGE_HEAD must be $tag)"
@@ -260,24 +270,33 @@ cmd_sync() {
 		exit 4
 	fi
 
-	apply_rebrand "$tag"
+	# Each rewritten file is staged at once, so `git merge --abort` still works if this run is interrupted.
+	apply_rebrand "$tag" yes
 	diskfs=$(git show HEAD:go.mod | awk '$1 == "github.com/diskfs/go-diskfs" { print $2 }')
 	[ -n "$diskfs" ] || die "can't read the go-diskfs version from our go.mod"
 	git show "$tag:go.mod" >go.mod
 	git show "$tag:go.sum" >go.sum
-	scripts/glueops-dev.sh sh -c "go get github.com/diskfs/go-diskfs@$diskfs && go mod tidy"
+	git add -- go.mod go.sum
 	echo "$tag" >.glueops/upstream-tag
-	scripts/glueops-dev.sh make docs
-	git add -A -- go.mod go.sum .glueops/upstream-tag docs "${REBRAND_SCOPE[@]}"
+	git add -- .glueops/upstream-tag
+	log=$(git rev-parse --git-path glueops-sync.log)
+	echo "Running go mod tidy and make docs in Docker (output: $log)..."
+	if ! { scripts/glueops-dev.sh sh -c "go get github.com/diskfs/go-diskfs@$diskfs && go mod tidy" &&
+		scripts/glueops-dev.sh make docs; } >"$log" 2>&1; then
+		tail -n 30 "$log" >&2
+		die "go mod tidy or make docs failed (full output: $log); fix it and re-run sync"
+	fi
+	git add -A -- go.mod go.sum docs "${REBRAND_SCOPE[@]}"
 
 	reviewed=()
 	while read -r path; do reviewed+=("$path"); done < <(awk -F'\t' '$1 == "owned" || $1 == "deleted" { print $2 }' <<<"$list")
 	echo "Upstream changes to files we own or deleted ($(git rev-parse --short "$old")..$tag), for the sync PR table:"
 	git diff --stat "$old" "$new" -- ${reviewed[@]+"${reviewed[@]}"} ':!CHANGELOG.md' ':!.release-please-manifest.json' || true
+	echo "See each one with: git diff $(git rev-parse --short "$old") $tag -- <file>"
 
 	guard_upstream "$old" "$tag" "$ack" || exit 3
 	check_tree "$tag" "$(snapshot_tree)" || exit 3
-	echo "OK: sync to $tag passes. Next: build, test, lint, then commit the merge (see FORK.md)."
+	echo "OK: sync to $tag passes. Next: the review table, then build, test, lint (see FORK.md). From now on use check, not sync."
 }
 
 self_test() {

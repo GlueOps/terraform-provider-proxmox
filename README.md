@@ -1,6 +1,6 @@
 # Terraform / OpenTofu Provider for Proxmox VE
 
-> **GlueOps fork** of [bpg/terraform-provider-proxmox](https://github.com/bpg/terraform-provider-proxmox), published as `registry.terraform.io/GlueOps/proxmox` with the added `proxmox_cloudinit_bootstrap` resource. See [FORK.md](FORK.md).
+> **GlueOps fork** of [bpg/terraform-provider-proxmox](https://github.com/bpg/terraform-provider-proxmox), published as `registry.terraform.io/GlueOps/proxmox` with the added `proxmox_cloudinit_bootstrap` resource. See [FORK.md](FORK.md). The badges and docs links below are upstream's.
 
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/bpg/terraform-provider-proxmox)](https://github.com/bpg/terraform-provider-proxmox/releases/latest)
 [![GitHub Release Date](https://img.shields.io/github/release-date/bpg/terraform-provider-proxmox?display_date=published_at)](https://github.com/bpg/terraform-provider-proxmox/releases/latest)

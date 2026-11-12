@@ -32,11 +32,13 @@ Don't use `make lint` or `make build` on the host: they install or run tools out
 
 ## Commits and PRs
 
-Check which base a branch is on with `git merge-base --is-ancestor glueops/main HEAD`.
+Check which base a branch is on with `git merge-base --is-ancestor glueops/main HEAD`: exit 0 means it contains
+`glueops/main` (fork work); exit 1 means it doesn't (work meant for bpg).
 
 - **Fork work** (the branch contains `glueops/main`):
   - Use Conventional Commits; release-please reads them to set our version.
-  - Use `feat` for new behaviour and `fix` for bug fixes. `chore`, `ci` and `docs` are hidden from the changelog and don't cut a release.
+  - Use `feat` for new behaviour and `fix` for bug fixes; `deps`, `perf` and `revert` also cut a release. `chore`, `ci`
+    and `docs` are hidden from the changelog and don't cut a release.
   - Open PRs with `--repo GlueOps/terraform-provider-proxmox`, because `gh` otherwise targets bpg.
   - Squash-merge, except sync PRs, which merge with a merge commit (see FORK.md).
   - The PR description becomes the squash commit's body, which release-please reads. Write it as prose; a line
@@ -69,6 +71,9 @@ These are settled. Don't re-raise them in reviews.
 - The `GetFileFromAgent` helper stays in `proxmox/nodes/vms`, the same as in bpg PR #3260.
 - Docs and examples are rebranded to `registry.terraform.io/GlueOps/proxmox` by the fixup script, and upstream's `>= x.y.z` lower bounds become `>= 0.0.1`. `example/` is not rebranded, because its `.tfrc` dev overrides are keyed to `bpg/proxmox`.
 - There are no required status checks beyond the org's. People and agents check that every check is green before merging.
+- The release-please setup deliberately differs from the GlueOps release-please skill's fleet convention (workflow name,
+  hidden chore, own changelog sections), because it has to coexist with upstream's files. Don't "reconcile" it.
+- The release App token asks only for contents and pull-requests write; the org App has nothing more.
 - Actions are pinned to commit SHAs by hand. `sha_pinning_required` is off, and Renovate is disabled in the fork.
 - The release gate (acceptance tests plus a lab plan) runs locally and never in GitHub, so no PVE credentials go into the repo.
 - Release 1 of a consuming module may not change any `proxmox_virtual_environment_vm`, because an in-place update reboots nodes.
