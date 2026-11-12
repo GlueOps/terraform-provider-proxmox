@@ -17,8 +17,10 @@ VMs, so never point the script or the tests at servers that run anything real.
   HETZNER_ROBOT_USER='...'
   HETZNER_ROBOT_PASSWORD='...'
   ```
-- **On the machine that runs it:** `bash`, `ssh`, `curl`, `python3` and `git`, plus Docker for the tests. The script runs on the
-  host, not in the dev container, because it drives the Robot API and SSHs to the servers.
+- **On the machine that runs it:** `bash`, `ssh`, `curl`, `python3` and `git`, plus Docker for the tests.
+- **Run it directly** on your workstation or devcontainer, **not** through `scripts/glueops-dev.sh`: it needs SSH and
+  the Robot API. The tests' Docker containers must reach the internet through the same public IP. If they don't, add
+  their IP with `LAB_ALLOW_IPS`.
 
 The script creates its own SSH key (`~/.ssh/glueops-acc-lab`) and registers it in Robot. Your own keys aren't used.
 
@@ -27,34 +29,54 @@ The script creates its own SSH key (`~/.ssh/glueops-acc-lab`) and registers it i
 From the repo root:
 
 ```sh
-scripts/glueops-acc-lab.sh all        # about 25 minutes; or run the stages one at a time, in this order
+scripts/glueops-acc-lab.sh all        # about 18-20 minutes; or run the stages one at a time, in this order
 ```
 
 | Stage | What it does | Time |
 | ----- | ------------ | ---- |
-| `rescue` | registers the lab key, boots both servers into Hetzner's rescue system (hardware reset) | 2-3 min |
+| `rescue` | registers the lab key, boots both servers into Hetzner's rescue system (hardware reset) | 1-2 min |
 | `install` | `installimage`: Debian 13 on software RAID 1 (UEFI layout), reboots into it | 6 min |
 | `pve` | Proxmox VE 9 from the no-subscription repo; Proxmox kernel; key-only SSH | 10 min |
-| `network` | `vmbr1` on each node: 10.10.10.1/24, NAT to the internet, DHCP with dnsmasq | 1 min |
+| `network` | `vmbr1` on each node: 10.10.10.1/24, NAT to the internet, DHCP with dnsmasq | seconds |
 | `cluster` | `pve1` creates the cluster `glueops-acc`, `pve2` joins over SSH | 1 min |
 | `storage` | `local` gets the `import`, `images`, `iso` (and `snippets`) content types | seconds |
 | `firewall` | pve-firewall: only this machine's public IP and the two nodes can reach them | seconds |
 | `token` | API user `terraform-acc@pve` with a token; writes `testacc.env` (mode 600, secret never printed) | seconds |
 | `check` | both nodes online, `local` content types, `vmbr1` active on both, the token works | seconds |
 
-Every stage can be re-run. To start over completely, run `all` again; `rescue` is the stage that wipes the servers.
+Most of the time is reboots, which run one node after the other.
 
-If the tests will run from another machine, its IP must get through the firewall: rerun with
-`LAB_ALLOW_IPS="<ip> ..." scripts/glueops-acc-lab.sh firewall`.
+**Output.** Each stage prints one progress line per step; the full command output goes to
+`~/.cache/glueops-acc-lab/build.log` (`LAB_LOG`). On a failure, the script prints the end of that log. It never prints
+the credentials, the token secret or the node IPs.
+
+**Re-running.** Every stage can be re-run. To start over completely, run `all` again; `rescue` is the stage that wipes
+the servers. Nothing local needs deleting first: the lab key (`~/.ssh/glueops-acc-lab`) is reused and `testacc.env` is
+overwritten.
+
+The `firewall` stage looks up this machine's public IP at `https://ifconfig.me`. Set `LAB_MY_IP` to skip that. If the
+tests will run from another machine, rerun the stage with `LAB_ALLOW_IPS="<ip> ..." scripts/glueops-acc-lab.sh
+firewall`.
 
 ## Run the gate
 
 ```sh
 scripts/glueops-acc-lab.sh check
 scripts/glueops-dev.sh ./testacc TestAccResourceCloudInitBootstrap
+scripts/glueops-acc-lab.sh leftovers     # exits 0 if the tests left nothing behind
 ```
 
 All 3 subtests must report `--- PASS`. They take about 2 minutes and clean up after themselves.
+
+## Getting at the nodes
+
+```sh
+scripts/glueops-acc-lab.sh ips                 # the node IPs
+scripts/glueops-acc-lab.sh ssh pve1            # root shell on pve1
+scripts/glueops-acc-lab.sh ssh pve2 qm list    # one command on pve2
+```
+
+You never need to open `testacc.env` or Robot to find a node.
 
 ## When a stage fails
 
@@ -68,10 +90,8 @@ All 3 subtests must report `--- PASS`. They take about 2 minutes and clean up af
 | `check`: 401 or connection refused | The token or the firewall: rerun `token`, or `firewall` with `LAB_ALLOW_IPS` set to the test machine's IP. |
 | Test: the bootstrap times out waiting for the guest agent | The VM got no address or internet access. On the node, `journalctl -u dnsmasq` should show a DHCPACK, `iptables -t nat -L POSTROUTING` should show MASQUERADE, and `/proc/sys/net/ipv4/ip_forward` should be `1`. |
 | Test: only 2 subtests ran | `PROXMOX_VE_ACC_NODE_2_NAME` is missing from `testacc.env`; rerun `token`. |
-| Leftovers after an interrupted test run | Delete VMs named `TestAcc*` and files named `cloudinit-*` or `TestAcc*` on `local`, on both nodes. |
-
-To get a shell on a node: `ssh -i ~/.ssh/glueops-acc-lab root@<ip>` (the IPs are in Robot, or in `testacc.env` for
-`pve1`).
+| `leftovers` lists VMs or files (after an interrupted test run) | Delete them: `scripts/glueops-acc-lab.sh ssh pve1 qm destroy <vmid> --purge` for the VMs, and `ssh <node> pvesm free <volume>` for the files on each node. Then rerun `leftovers`. |
+| `firewall`: can't look up the public IP | `ifconfig.me` is unreachable; set `LAB_MY_IP`. |
 
 ## How it's put together (for changing the script)
 

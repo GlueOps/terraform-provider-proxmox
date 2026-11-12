@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Builds the release gate lab: two Hetzner dedicated servers as a Proxmox VE 9 cluster, then writes testacc.env.
-# See .glueops/release-gate-lab.md. Runs on the host (it drives the Robot API and SSH), not in the dev container.
+# See .glueops/release-gate-lab.md. Run it directly (workstation or devcontainer), not through scripts/glueops-dev.sh:
+# it drives the Robot API and SSH. Command output goes to $LAB_LOG; the screen shows only progress (and, on failure,
+# the end of the log). It never prints the Robot credentials, the token secret or the lab IPs, except in stage "ips".
 #
 #   scripts/glueops-acc-lab.sh <stage>...      stages run in the order given; "all" runs every stage
 #
@@ -14,12 +16,17 @@
 #   firewall  pve-firewall: only the management IPs reach the nodes; VMs on vmbr1 get DHCP/DNS
 #   token     API user and token; writes testacc.env (never prints the secret)
 #   check     pre-flight: both nodes online, storage and bridge right, the token works
+#   leftovers after the tests: lists test VMs and files left on the lab; exits 3 if there are any
+#   ips       prints the node IPs (pve1 first)
+#   ssh NODE [COMMAND...]  shell, or one command, on pve1 or pve2 as root
 #
 # Settings (environment):
 #   ROBOT_ENV      file with HETZNER_ROBOT_USER / HETZNER_ROBOT_PASSWORD (default ~/.config/hetzner-robot.env)
 #   LAB_SERVERS    Robot server numbers, pve1 first (default: "3112535 3113374")
 #   LAB_ALLOW_IPS  extra IPs allowed to reach the nodes (this machine's public IP is always added)
+#   LAB_MY_IP      this machine's public IP for the firewall (default: looked up at https://ifconfig.me)
 #   TESTACC_ENV    where to write testacc.env (default: ./testacc.env in the repo root)
+#   LAB_LOG        command output log (default: ~/.cache/glueops-acc-lab/build.log)
 set -euo pipefail
 
 ROOT=$(git rev-parse --show-toplevel)
@@ -27,6 +34,7 @@ ROBOT_ENV=${ROBOT_ENV:-$HOME/.config/hetzner-robot.env}
 LAB_SERVERS=${LAB_SERVERS:-"3112535 3113374"}
 TESTACC_ENV=${TESTACC_ENV:-$ROOT/testacc.env}
 KEY=${LAB_KEY:-$HOME/.ssh/glueops-acc-lab}
+LAB_LOG=${LAB_LOG:-$HOME/.cache/glueops-acc-lab/build.log}
 API=https://robot-ws.your-server.de
 NAMES=(pve1 pve2)
 CLUSTER=glueops-acc
@@ -35,6 +43,11 @@ SUBNET=10.10.10
 
 log() { echo "[$(date +%T)] $*"; }
 die() { echo "glueops-acc-lab: $*" >&2; exit 1; }
+# Runs a command (stdin passes through) with its output in $LAB_LOG; on failure shows the end of the log and stops.
+quiet() {
+	echo "--- $(date +%T) $*" >>"$LAB_LOG"
+	"$@" >>"$LAB_LOG" 2>&1 || { tail -n 30 "$LAB_LOG" >&2; die "failed (full output: $LAB_LOG)"; }
+}
 
 robot() { # method path [curl args...]; prints the JSON body
 	local m=$1 p=$2
@@ -55,6 +68,7 @@ load() {
 		IPS+=("$(robot GET "/server/$s" | python3 -c 'import sys,json; print(json.load(sys.stdin)["server"]["server_ip"])')")
 	done
 	[ -f "$KEY" ] || ssh-keygen -q -t ed25519 -N '' -C glueops-acc-lab -f "$KEY"
+	mkdir -p "$(dirname "$LAB_LOG")"
 }
 
 ssh_opts=(-o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
@@ -125,7 +139,7 @@ PART /boot ext3 1024M
 PART / ext4 all
 IMAGE /root/.oldroot/nfs/install/../images/Debian-trixie-latest-amd64-base.tar.zst
 EOF
-		log "${NAMES[$i]}: installimage (about 3 minutes)"
+		log "${NAMES[$i]}: installimage (about 2 minutes)"
 		# The servers boot UEFI, so the layout needs an ESP. installimage needs TERM even unattended; on failure the
 		# real reason is in /root/debug.txt, not in its output ("Cancelled.").
 		on "$i" 'TERM=xterm /root/.oldroot/nfs/install/installimage -a -c /tmp/setup.conf >/tmp/installimage.log 2>&1' ||
@@ -136,8 +150,8 @@ EOF
 
 st_pve() {
 	for i in 0 1; do
-		log "${NAMES[$i]}: Proxmox VE repo, kernel"
-		on "$i" "bash -s ${IPS[$i]} ${NAMES[$i]}" <<'EOF'
+		log "${NAMES[$i]}: Proxmox VE repo, kernel (about 1 minute)"
+		quiet on "$i" "bash -s ${IPS[$i]} ${NAMES[$i]}" <<'EOF'
 set -euo pipefail
 ip=$1 name=$2
 export DEBIAN_FRONTEND=noninteractive
@@ -161,8 +175,8 @@ EOF
 	done
 	for i in 0 1; do reboot_node "$i" 'uname -r | grep -q pve'; done
 	for i in 0 1; do
-		log "${NAMES[$i]}: proxmox-ve packages (about 5 minutes)"
-		on "$i" 'bash -s' <<'EOF'
+		log "${NAMES[$i]}: proxmox-ve packages (about 1-2 minutes)"
+		quiet on "$i" 'bash -s' <<'EOF'
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 echo "postfix postfix/main_mailer_type select Local only" | debconf-set-selections
@@ -181,7 +195,7 @@ EOF
 
 st_network() {
 	for i in 0 1; do
-		on "$i" "bash -s $BRIDGE $SUBNET" <<'EOF'
+		quiet on "$i" "bash -s $BRIDGE $SUBNET" <<'EOF'
 set -euo pipefail
 br=$1 net=$2
 up=$(ip -o -4 route show default | awk '{print $5; exit}')
@@ -222,7 +236,7 @@ st_cluster() {
 	if on 0 'pvecm status >/dev/null 2>&1'; then
 		log "pve1: cluster already exists"
 	else
-		on 0 "pvecm create $CLUSTER"
+		quiet on 0 "pvecm create $CLUSTER"
 	fi
 	if on 1 'pvecm status >/dev/null 2>&1'; then
 		log "pve2: already in the cluster"
@@ -235,18 +249,21 @@ st_cluster() {
 			die "pve1's cluster filesystem didn't become writable"
 		# shellcheck disable=SC2016 # expands on pve1, not here
 		on 1 'cat /root/.ssh/id_rsa.pub' | on 0 'k=$(cat); grep -qxF "$k" /etc/pve/priv/authorized_keys || echo "$k" >> /etc/pve/priv/authorized_keys'
-		on 1 "ssh-keyscan -H ${IPS[0]} >> /root/.ssh/known_hosts 2>/dev/null; pvecm add ${IPS[0]} --use_ssh"
+		quiet on 1 "ssh-keyscan -H ${IPS[0]} >> /root/.ssh/known_hosts 2>/dev/null; pvecm add ${IPS[0]} --use_ssh"
 	fi
-	on 0 'pvecm status | grep -E "Nodes:|Quorate:"'
+	on 0 'pvecm status | grep -qE "Quorate:.*Yes" && pvecm status | grep -qE "Nodes:[[:space:]]+2"' ||
+		die "the cluster isn't quorate with 2 nodes (on pve1: pvecm status)"
+	log "cluster $CLUSTER: 2 nodes, quorate"
 }
 
 st_storage() {
-	on 0 'pvesm set local --content iso,vztmpl,backup,import,images,snippets && pvesm status --content images'
+	quiet on 0 'pvesm set local --content iso,vztmpl,backup,import,images,snippets'
+	log "local: content import,images,iso,snippets (plus backup,vztmpl)"
 }
 
 st_firewall() {
-	local me allow ip
-	me=$(curl -fsS https://ifconfig.me)
+	local me allow ip n=0
+	me=${LAB_MY_IP:-$(curl -fsS https://ifconfig.me)} || die "can't look up this machine's public IP; set LAB_MY_IP"
 	allow="$me ${IPS[0]} ${IPS[1]} ${LAB_ALLOW_IPS:-}"
 	{
 		echo '[OPTIONS]'
@@ -262,17 +279,18 @@ st_firewall() {
 		echo "IN ACCEPT -i $BRIDGE -log nolog"
 		echo 'IN ACCEPT -p icmp -log nolog'
 	} | on 0 'cat > /etc/pve/firewall/cluster.fw.new && mv /etc/pve/firewall/cluster.fw.new /etc/pve/firewall/cluster.fw'
-	both 'pve-firewall restart'
+	quiet both 'pve-firewall restart'
 	sleep 5
 	for i in 0 1; do on "$i" true || die "lost SSH to ${NAMES[$i]} after the firewall change; fix it from rescue"; done
-	log "firewall on; allowed: $allow"
+	for ip in $allow; do n=$((n + 1)); done
+	log "firewall on: $n IPs allowed (this machine, both nodes, LAB_ALLOW_IPS)"
 }
 
 st_token() {
 	local secret
-	on 0 'pveum user list --output-format json | grep -q "terraform-acc@pve" || pveum user add terraform-acc@pve --comment "GlueOps fork release gate"'
-	on 0 'pveum acl modify / --users terraform-acc@pve --roles Administrator'
-	on 0 'pveum user token remove terraform-acc@pve gate >/dev/null 2>&1 || true'
+	quiet on 0 'pveum user list --output-format json | grep -q "terraform-acc@pve" || pveum user add terraform-acc@pve --comment "GlueOps fork release gate"'
+	quiet on 0 'pveum acl modify / --users terraform-acc@pve --roles Administrator'
+	quiet on 0 'pveum user token remove terraform-acc@pve gate >/dev/null 2>&1 || true'
 	secret=$(on 0 'pveum user token add terraform-acc@pve gate --privsep 0 --output-format json' |
 		python3 -c 'import sys,json; print(json.load(sys.stdin)["value"])')
 	[ -n "$secret" ] || die "no token secret returned"
@@ -303,17 +321,38 @@ st_check() {
 	for n in pve1 pve2; do
 		pve "nodes/$n/network?type=bridge" | python3 -c "import sys,json; d=[x for x in json.load(sys.stdin)['data'] if x['iface']=='$BRIDGE']; assert d, '$n has no $BRIDGE'; print('$n $BRIDGE:', d[0].get('cidr'), 'active' if d[0].get('active') else 'INACTIVE')"
 	done
-	log "lab ready: run scripts/glueops-dev.sh ./testacc TestAccResourceCloudInitBootstrap"
+	log "lab ready: run scripts/glueops-dev.sh ./testacc TestAccResourceCloudInitBootstrap, then: $0 leftovers"
 }
 
-[ $# -gt 0 ] || { sed -n '2,24p' "$0" >&2; exit 1; }
+st_leftovers() {
+	local vms files
+	vms=$(on 0 "pvesh get /cluster/resources --type vm --output-format json" |
+		python3 -c 'import sys,json; print("\n".join(v["node"]+": "+str(v.get("name")) for v in json.load(sys.stdin)))')
+	files=$(for i in 0 1; do on "$i" "pvesm list local 2>/dev/null | awk 'NR>1 && \$1 ~ /cloudinit-|TestAcc/ {print \"${NAMES[$i]}: \" \$1}'"; done)
+	if [ -z "$vms$files" ]; then
+		log "no leftovers: 0 VMs, 0 test files on local"
+		return 0
+	fi
+	echo "leftovers (delete them before the next run; see the runbook):"
+	printf '%s\n' "$vms" "$files" | sed '/^$/d; s/^/  /'
+	exit 3
+}
+
+st_ips() { printf '%s %s\n' "${NAMES[0]}" "${IPS[0]}" "${NAMES[1]}" "${IPS[1]}"; }
+
+[ $# -gt 0 ] || { sed -n '2,31p' "$0" >&2; exit 1; }
 load
+if [ "$1" = ssh ]; then
+	case "${2:-}" in pve1) n=0 ;; pve2) n=1 ;; *) die "usage: $0 ssh pve1|pve2 [command...]" ;; esac
+	shift 2
+	exec ssh "${ssh_opts[@]}" -i "$KEY" "root@${IPS[$n]}" "$@"
+fi
 for stage in "$@"; do
 	[ "$stage" = all ] && set -- rescue install pve network cluster storage firewall token check && break
 done
 for stage in "$@"; do
 	case "$stage" in
-	rescue | install | pve | network | cluster | storage | firewall | token | check)
+	rescue | install | pve | network | cluster | storage | firewall | token | check | leftovers | ips)
 		log "== $stage"
 		"st_$stage"
 		;;
