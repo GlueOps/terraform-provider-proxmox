@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.2](https://github.com/GlueOps/terraform-provider-proxmox/compare/v0.0.1...v0.0.2) (2026-11-12)
+
+
+### Bug Fixes
+
+* publish releases only after assets are uploaded ([#9](https://github.com/GlueOps/terraform-provider-proxmox/issues/9)) ([9aece7a](https://github.com/GlueOps/terraform-provider-proxmox/commit/9aece7a0611bc4f2f3f524b735a7a00530a77ad7))
+
 ## 0.0.1 (2026-11-12)
 
 
