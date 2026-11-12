@@ -58,8 +58,8 @@ Terraform and OpenTofu version requirements are listed in the [provider document
 
 ## Security
 
-- Report vulnerabilities privately as described in [SECURITY.md](.github/SECURITY.md). Do not open public issues for them.
-- Published advisories are listed on the [security advisories](https://github.com/bpg/terraform-provider-proxmox/security/advisories) page.
+- Report vulnerabilities privately through the fork's [security advisories](https://github.com/GlueOps/terraform-provider-proxmox/security/advisories/new). Do not open public issues for them.
+- Published advisories are listed on the [security advisories](https://github.com/GlueOps/terraform-provider-proxmox/security/advisories) page.
 - Nearly all operations use the Proxmox VE API. Use an API token with only the privileges your resources need.
 - The few operations that require SSH run commands on the node through `sudo`. Use the sudoers configuration from the [SSH User](https://bpg.sh/docs#ssh-user) section of the documentation as written. Granting the SSH user unrestricted `sudo` access to binaries such as `qm` or `pvesm` is equivalent to giving it root on the host.
 

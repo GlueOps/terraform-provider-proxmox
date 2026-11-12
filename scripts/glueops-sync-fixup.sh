@@ -18,6 +18,7 @@ ROOT=$(git rev-parse --show-toplevel)
 cd "$ROOT"
 ALLOWLIST=.glueops/allowlist
 SOURCE_NEW='registry.terraform.io/GlueOps/proxmox'
+ADVISORIES='https://github.com/GlueOps/terraform-provider-proxmox/security/advisories'
 # Rebranded paths, in upstream: every file here with a "bpg/proxmox" source or a release-please version marker.
 REBRAND_SCOPE=(README.md Makefile docs/index.md docs/guides docs/data-sources examples)
 # Upstream build inputs that run while the signing key is unlocked: any upstream change needs --ack.
@@ -59,13 +60,28 @@ rebrand_targets() {
 rebrand_stream() {
 	local path=$1 version=$2
 	sed -E -e "s#(source[[:space:]]*=[[:space:]]*)\"bpg/proxmox\"#\\1\"$SOURCE_NEW\"#" \
-		-e "/x-release-please-version/ s/[0-9]+\\.[0-9]+\\.[0-9]+/$version/" \
-		-e "/x-release-please-version/! s/(version[[:space:]]*=[[:space:]]*\")>= *[0-9]+\\.[0-9]+\\.[0-9]+\"/\\1>= 0.0.1\"/" |
+		-e "/x-release-please-version/ s/[0-9]+\\.[0-9]+\\.[0-9]+/$version/" |
+		# Upstream's ">= x.y.z" floor right after our source line can't be met by our versions; other providers keep theirs.
+		awk -v src="\"$SOURCE_NEW\"" '
+			prev && /^[[:space:]]*version[[:space:]]*=[[:space:]]*">= *[0-9]+\.[0-9]+\.[0-9]+"/ && !/x-release-please-version/ {
+				sub(/">= *[0-9]+\.[0-9]+\.[0-9]+"/, "\">= 0.0.1\"") }
+			{ prev = index($0, src) > 0; print }' |
 		case "$path" in
 		docs/index.md) insert_after '^# Proxmox Provider$' "$INDEX_NOTE" ;;
-		README.md) insert_after '^# Terraform / OpenTofu Provider for Proxmox VE$' "$README_NOTE" ;;
+		README.md) insert_after '^# Terraform / OpenTofu Provider for Proxmox VE$' "$README_NOTE" | readme_security ;;
 		*) cat ;;
 		esac
+}
+
+# The fork deletes upstream's SECURITY.md, so point the README's reporting lines at the fork's advisories.
+readme_security() {
+	awk -v adv="$ADVISORIES" '
+		/^- Report vulnerabilities privately as described in \[SECURITY\.md\]/ {
+			print "- Report vulnerabilities privately through the fork'"'"'s [security advisories](" adv "/new). Do not open public issues for them."; n++; next }
+		/^- Published advisories are listed on the \[security advisories\]\(https:\/\/github\.com\/bpg\// {
+			print "- Published advisories are listed on the [security advisories](" adv ") page."; n++; next }
+		{ print }
+		END { if (n != 2) { print "README security lines not found" > "/dev/stderr"; exit 5 } }'
 }
 
 insert_after() {
@@ -129,9 +145,9 @@ check_tree() {
 			fi
 			;;
 		deleted)
-			if git ls-tree -r --name-only "$tree" -- "$path" | grep -q .; then
+			if [ -n "$(git ls-tree -r --name-only "$tree" -- "$path")" ]; then
 				fail "deleted $path: present again (git rm it)"
-			elif ! git ls-tree -r --name-only "$tag" -- "$path" | grep -q .; then
+			elif [ -z "$(git ls-tree -r --name-only "$tag" -- "$path")" ]; then
 				echo "note: deleted $path no longer exists upstream; the entry can go" >&2
 			fi
 			;;
@@ -168,21 +184,22 @@ check_tree() {
 
 # Upstream changes between two tags that a human must read before pushing a sync branch.
 guard_upstream() {
-	local old=$1 new=$2 ack=$3 hits=0 kept path
+	local old=$1 new=$2 ack=$3 hits=0 kept path d
 	[ "$old" != "$(git rev-parse "$new^{commit}")" ] || return 0
-	if ! git diff --quiet "$old" "$new" -- "${GUARDED[@]}"; then
-		git diff "$old" "$new" -- "${GUARDED[@]}" >&2
+	d=$(git diff "$old" "$new" -- "${GUARDED[@]}")
+	if [ -n "$d" ]; then
+		printf '%s\n' "$d" >&2
 		echo "GUARD: upstream changed build inputs that run with the signing key (${GUARDED[*]})" >&2
 		hits=$((hits + 1))
 	fi
+	# Kept workflows run in our CI as upstream wrote them, so any change to them needs a human's --ack.
 	kept=()
 	while read -r path; do kept+=("$path"); done < <(entries HEAD | awk -F'\t' '$1 == "kept" { print $2 }')
-	if ! git diff --quiet "$old" "$new" -- "${kept[@]}"; then
-		git diff "$old" "$new" -- "${kept[@]}" >&2
-		if git diff "$old" "$new" -- "${kept[@]}" | grep -E '^\+' | grep -qE 'permissions:|secrets\.|pull_request_target|workflow_run'; then
-			echo "GUARD: upstream added permissions, secrets or risky triggers to a kept workflow" >&2
-			hits=$((hits + 1))
-		fi
+	d=$(git diff "$old" "$new" -- ${kept[@]+"${kept[@]}"})
+	if [ ${#kept[@]} -gt 0 ] && [ -n "$d" ]; then
+		printf '%s\n' "$d" >&2
+		echo "GUARD: upstream changed a kept workflow (${kept[*]})" >&2
+		hits=$((hits + 1))
 	fi
 	if [ "$hits" -gt 0 ] && [ "$ack" != yes ]; then
 		echo "Read the diff above, then re-run with --ack to accept it." >&2
@@ -201,7 +218,8 @@ apply_rebrand() {
 
 cmd_sync() {
 	local tag=$1 ack=$2 old new list targets path kind diskfs reviewed left=()
-	new=$(git rev-parse "$tag^{commit}") || die "unknown tag $tag (git fetch --no-tags origin tag $tag)"
+	require_tag "$tag"
+	new=$(git rev-parse "$tag^{commit}")
 	[ "$(git rev-parse -q --verify MERGE_HEAD)" = "$new" ] || die "run this during 'git merge $tag' (MERGE_HEAD must be $tag)"
 	old=$(git show HEAD:.glueops/upstream-tag | tr -d '[:space:]')
 	require_tag "$old"
@@ -225,16 +243,14 @@ cmd_sync() {
 			continue # rebuilt below
 		fi
 		case "$kind" in
-		owned) ;; # restored above
-		deleted) git rm -q -f -- "$path" ;;
+		owned | deleted) ;; # restored above / removed below
 		*) left+=("$path") ;;
 		esac
 	done < <(git diff --name-only --diff-filter=U)
 
 	# Deleted paths that merged in cleanly (upstream changed them, or added files under a deleted dir).
 	awk -F'\t' '$1 == "deleted" { print $2 }' <<<"$list" | while read -r path; do
-		git ls-files -- "$path" | grep -q . && git rm -rq -f -- "$path"
-		true
+		if [ -n "$(git ls-files -- "$path")" ]; then git rm -rq -f -- "$path"; fi
 	done
 
 	# Go files with conflict markers break go mod tidy and make docs, so stop here first.
@@ -257,7 +273,7 @@ cmd_sync() {
 	reviewed=()
 	while read -r path; do reviewed+=("$path"); done < <(awk -F'\t' '$1 == "owned" || $1 == "deleted" { print $2 }' <<<"$list")
 	echo "Upstream changes to files we own or deleted ($(git rev-parse --short "$old")..$tag), for the sync PR table:"
-	git diff --stat "$old" "$new" -- "${reviewed[@]}" ':!CHANGELOG.md' ':!.release-please-manifest.json' || true
+	git diff --stat "$old" "$new" -- ${reviewed[@]+"${reviewed[@]}"} ':!CHANGELOG.md' ':!.release-please-manifest.json' || true
 
 	guard_upstream "$old" "$tag" "$ack" || exit 3
 	check_tree "$tag" "$(snapshot_tree)" || exit 3
@@ -297,7 +313,6 @@ self_test() {
 
 	expect_drift "unlisted file" "$(echo x | tree_with "$base" add zz-unlisted.txt)" "zz-unlisted.txt: not in"
 	expect_drift "restored deleted file" "$(git show "$tag:.github/workflows/stale.yaml" | tree_with "$base" add .github/workflows/stale.yaml)" "present again"
-	expect_drift "new workflow" "$(echo 'on: push' | tree_with "$base" add .github/workflows/new.yml)" "new.yml"
 	expect_drift "nested agent file" "$(echo x | tree_with "$base" add docs/AGENTS.md)" "agent config"
 	expect_drift "hand-edited rebranded file" "$( (git show "$base:docs/index.md"; echo extra) | tree_with "$base" add docs/index.md)" "docs/index.md: differs"
 	expect_drift "owned file removed" "$(tree_with "$base" rm FORK.md </dev/null)" "FORK.md"
@@ -312,7 +327,7 @@ self_test() {
 		echo "FAIL missing anchor not detected"; return 1
 	fi
 	echo "ok   missing anchor detected"
-	got=$(echo '      version = ">= 0.60.0"' | rebrand_stream examples/x.tf 9.8.7)
+	got=$(printf '      source  = "bpg/proxmox"\n      version = ">= 0.60.0"\n' | rebrand_stream examples/x.tf 9.8.7 | tail -1)
 	if [ "$got" != '      version = ">= 0.0.1"' ]; then
 		echo "FAIL lower-bound rewrite: $got"
 		return 1
@@ -333,7 +348,7 @@ self_test() {
 	guard_case() { # name, path, appended line
 		local t c
 		t=$( (git show "$tag:$2"; echo "$3") | tree_with "$(git rev-parse "$tag^{tree}")" add "$2")
-		c=$(git commit-tree "$t" -p "$tag" -m guard-test)
+		c=$(git -c user.name=glueops-self-test -c user.email=self-test@example.invalid commit-tree "$t" -p "$tag" -m guard-test)
 		set +e
 		out=$(guard_upstream "$(git rev-parse "$tag^{commit}")" "$c" no 2>&1)
 		got=$?
@@ -341,7 +356,26 @@ self_test() {
 		if [ "$got" -eq 3 ] && grep -qF GUARD <<<"$out"; then echo "ok   $1"; else echo "FAIL $1 (exit $got)"; return 1; fi
 	}
 	guard_case "guard: goreleaser change" .goreleaser.yaml '# upstream change'
-	guard_case "guard: kept workflow gains permissions" .github/workflows/test.yml 'permissions: write-all'
+	guard_case "guard: kept workflow changed" .github/workflows/test.yml '# upstream change'
+
+	# A workflow added upstream merges in cleanly, so it shows no diff against the tag; only the presence check sees it.
+	local up_tree up
+	up_tree=$(echo 'on: push' | tree_with "$(git rev-parse "$tag^{tree}")" add .github/workflows/new-upstream.yml)
+	up=$(git -c user.name=glueops-self-test -c user.email=self-test@example.invalid commit-tree "$up_tree" -p "$tag" -m new-workflow-test)
+	set +e
+	out=$(check_tree "$up" "$(echo 'on: push' | tree_with "$base" add .github/workflows/new-upstream.yml)" 2>&1)
+	got=$?
+	set -e
+	if [ "$got" -eq 3 ] && grep -qF "workflow not listed" <<<"$out"; then echo "ok   new upstream workflow"; else
+		echo "FAIL new upstream workflow (exit $got)"; printf '%s\n' "$out" | sed 's/^/     /'; return 1
+	fi
+
+	got=$(printf '      source  = "bpg/proxmox"\n      version = ">= 0.60.0"\n      source  = "hashicorp/http"\n      version = ">= 3.4.0"\n' |
+		rebrand_stream examples/x.tf 9.8.7 | grep -c '">= 0.0.1"')
+	if [ "$got" != 1 ]; then echo "FAIL lower-bound rewrite touched another provider ($got)"; return 1; fi
+	echo "ok   other providers' lower bounds kept"
+	if ! git show "$base:README.md" | grep -qF "$ADVISORIES/new"; then echo "FAIL README security link"; return 1; fi
+	echo "ok   README security link"
 
 	docker run --rm -v "$ROOT/scripts":/s:ro koalaman/shellcheck:v0.10.0 /s/glueops-sync-fixup.sh /s/glueops-dev.sh &&
 		echo "ok   shellcheck"

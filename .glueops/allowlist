@@ -1,11 +1,5 @@
 # Every path where the GlueOps fork differs from upstream, checked by scripts/glueops-sync-fixup.sh.
-# Format: <kind> <path>. A path ending in "/" covers everything under it.
-#   owned    ours; in a sync ours wins, then upstream's change to it is reviewed (FORK.md)
-#   deleted  must stay absent; a sync deletes it again
-#   feature  fork feature code; in a sync, conflicts are resolved by hand
-#   kept     upstream file we keep unchanged (only workflows need listing: any other workflow fails the check)
-# Rebranded files (docs/examples "source"/version lines, README banner) are not listed here: the script
-# derives them from upstream and checks that ours equals upstream's copy rebranded.
+# Format: <kind> <path>; a path ending in "/" covers everything under it. Kinds are explained in FORK.md.
 
 owned   .github/workflows/release-please.yml
 owned   .glueops/allowlist

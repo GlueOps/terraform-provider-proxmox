@@ -57,7 +57,7 @@ Check which base a branch is on with `git merge-base --is-ancestor glueops/main 
 - **Retries:** use `proxmox/retry`. Delete operations must not retry on `api.ErrResourceDoesNotExist`.
 - **Tests:** follow [ADR-006](docs/adr/006-testing-requirements.md). Use acceptance tests against a real PVE, not a faked API, and write tests that fail without the fix.
 - **Docs:** Framework docs are generated from schema `MarkdownDescription` or `templates/`. Never hand-edit those files in `docs/`. Run `make docs` after schema changes.
-- **Keep the fork's footprint small.** The only upstream files our feature touches are `fwprovider/provider.go`, `main.go`, `proxmox/nodes/vms/vms.go`, `proxmox/nodes/vms/vms_types.go` and `go.mod`/`go.sum`. Don't widen this. Put new code in our own package.
+- **Keep the fork's footprint small.** The only upstream files our feature touches are `fwprovider/provider.go`, `main.go`, `proxmox/nodes/vms/vms.go`, `proxmox/nodes/vms/vms_types.go`, `example/variables.tf` and `go.mod`/`go.sum`. Don't widen this. Put new code in our own package.
 
 ## Decisions
 

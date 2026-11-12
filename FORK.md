@@ -35,11 +35,8 @@ fails if the tree differs anywhere else.
 | owned    | release-please files, `CHANGELOG.md`, `AGENTS.md`, this file | ours always wins; upstream's change is reviewed (see the table below) |
 | deleted  | upstream-only workflows, `.claude/`, `.devcontainer/`       | stays deleted                                                       |
 | kept     | `test.yml`, `golangci-lint.yml`                             | taken from upstream; risky changes stop the sync                   |
-| feature  | `fwprovider/nodes/cloudinitbootstrap/`, 5 shared files      | conflicts are resolved by hand                                      |
-| rebranded | docs/examples `source` and version lines, the README and index notes | rebuilt from upstream by the script                            |
-
-The **rebranded** files aren't listed in the allowlist. The script derives them (`REBRAND_SCOPE`) and checks that ours
-equals upstream's copy, rebranded.
+| feature  | `fwprovider/nodes/cloudinitbootstrap/`, 6 shared files      | conflicts are resolved by hand                                      |
+| rebranded | docs/examples `source` and version lines, README and index notes, README security links | rebuilt from upstream by the script                            |
 
 ## Clone setup (once)
 
@@ -81,7 +78,8 @@ these steps, but a human makes the decisions marked **you**.
    - Exit 4: feature files conflict. Take upstream's version, re-apply our lines, `git add`, and re-run `sync`.
    - Any other non-zero exit is a `go` or `make docs` error, usually from a hand-resolved feature file. Fix it and
      re-run `sync`.
-   - Exit 3 with `DRIFT:`: something isn't covered.
+   - Exit 3 with `DRIFT:`: something isn't covered. Fix it, then run `check "$TAG"`, not `sync`: re-running `sync`
+     resets our owned files, including the allowlist and release config you just edited.
      - A new upstream workflow or agent file: delete it (`git rm`) and add a `deleted` entry. **You** decide if it
        should be `kept` instead.
      - A new file with a version marker: add it to `extra-files` in `release-please-config.json`.
@@ -134,6 +132,8 @@ assets.
    `manifest.json`.
    ```sh
    gh release download vX.Y.Z --repo GlueOps/terraform-provider-proxmox --dir /tmp/rel && cd /tmp/rel
+   curl -fsSL https://raw.githubusercontent.com/opentofu/registry/main/keys/g/glueops/autoglue/provider-1773006671.asc | gpg --import
+   gpg --fingerprint 52319649A2976E57   # must end in 5231 9649 A297 6E57
    gpg --verify terraform-provider-proxmox_X.Y.Z_SHA256SUMS.sig terraform-provider-proxmox_X.Y.Z_SHA256SUMS
    sha256sum -c terraform-provider-proxmox_X.Y.Z_SHA256SUMS
    gh attestation verify terraform-provider-proxmox_X.Y.Z_linux_amd64.zip --repo GlueOps/terraform-provider-proxmox
