@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.4](https://github.com/GlueOps/terraform-provider-proxmox/compare/v0.0.3...v0.0.4) (2026-11-12)
+
+
+### Features
+
+* add the release gate lab on Hetzner and make the gate the lab's acceptance tests ([#13](https://github.com/GlueOps/terraform-provider-proxmox/issues/13)) ([df6b73c](https://github.com/GlueOps/terraform-provider-proxmox/commit/df6b73cdea0f637a8a90d4b2b3457a934f4b5b82))
+
 ## [0.0.3](https://github.com/GlueOps/terraform-provider-proxmox/compare/v0.0.2...v0.0.3) (2026-11-12)
 
 
