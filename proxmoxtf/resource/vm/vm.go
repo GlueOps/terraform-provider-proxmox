@@ -155,7 +155,8 @@ const (
 	maxResourceVirtualEnvironmentVMSerialDevices = 4
 	// see /usr/share/perl5/PVE/QemuServer/PCI.pm.
 	maxResourceVirtualEnvironmentVMHostPCIDevices = 16
-	maxResourceVirtualEnvironmentVMHostUSBDevices = 4
+	// see /usr/share/perl5/PVE/QemuServer/USB.pm: "our $MAX_USB_DEVICES = 14".
+	maxResourceVirtualEnvironmentVMHostUSBDevices = 14
 	// hardcoded /usr/share/perl5/PVE/QemuServer/Memory.pm: "our $MAX_NUMA = 8".
 	maxResourceVirtualEnvironmentVMNUMADevices  = 8
 	maxResourceVirtualEnvironmentVirtiofsShares = 8
@@ -1131,6 +1132,7 @@ func VM() *schema.Resource {
 					},
 				},
 			},
+			MaxItems: maxResourceVirtualEnvironmentVMHostUSBDevices,
 		},
 		mkHotplug: {
 			Type: schema.TypeString,
@@ -1499,10 +1501,12 @@ func VM() *schema.Resource {
 						Default:     dvStartupUpDelay,
 					},
 					mkStartupDownDelay: {
-						Type:        schema.TypeInt,
-						Description: "A non-negative number defining the delay in seconds before the next VM is shut down",
-						Optional:    true,
-						Default:     dvStartupDownDelay,
+						Type: schema.TypeInt,
+						Description: "A non-negative number defining the shutdown timeout in seconds. When the node stops all guests " +
+							"(e.g. on host shutdown), Proxmox VE waits this long for the VM to shut down " +
+							"before stopping it. It is also the default timeout for a shutdown of this VM that doesn't set one",
+						Optional: true,
+						Default:  dvStartupDownDelay,
 					},
 				},
 			},
@@ -2845,12 +2849,12 @@ func vmCreateClone(ctx context.Context, d *schema.ResourceData, m any) diag.Diag
 	}
 
 	hookScript := d.Get(mkHookScriptFileID).(string)
-	currentHookScript := vmConfig.HookScript
 
+	// Writing hookscript requires a root@pam password session (API tokens get HTTP 500): keep the inherited one.
 	if len(hookScript) > 0 {
-		updateBody.HookScript = &hookScript
-	} else if currentHookScript != nil {
-		del = append(del, "hookscript")
+		if vmConfig.HookScript == nil || *vmConfig.HookScript != hookScript {
+			updateBody.HookScript = &hookScript
+		}
 	}
 
 	if len(watchdog) > 0 && watchdog[0] != nil {
@@ -4962,8 +4966,7 @@ func vmReadCustom(
 	currentUSBList := d.Get(mkHostUSB).([]any)
 	usbMap := map[string]any{}
 
-	usbDevices := getUSBInfo(vmConfig, d)
-	for pi, pp := range usbDevices {
+	for pi, pp := range vmConfig.USBDevices {
 		if (pp == nil) || (pp.HostDevice == nil && pp.Mapping == nil) {
 			continue
 		}
@@ -7683,17 +7686,6 @@ func getNUMAInfo(resp *vms.GetResponseData, _ *schema.ResourceData) map[string]*
 	numaDevices["numa7"] = resp.NUMADevices7
 
 	return numaDevices
-}
-
-func getUSBInfo(resp *vms.GetResponseData, _ *schema.ResourceData) map[string]*vms.CustomUSBDevice {
-	usbDevices := map[string]*vms.CustomUSBDevice{}
-
-	usbDevices["usb0"] = resp.USBDevice0
-	usbDevices["usb1"] = resp.USBDevice1
-	usbDevices["usb2"] = resp.USBDevice2
-	usbDevices["usb3"] = resp.USBDevice3
-
-	return usbDevices
 }
 
 func parseImportIDWithNodeName(id string) (string, string, error) {
