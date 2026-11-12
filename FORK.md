@@ -154,10 +154,15 @@ assets.
    Registry through a release webhook, the OpenTofu registry by polling tags about every 15 minutes. If the Terraform
    Registry is missing a version, use **Resync** in its provider settings.
 
-   **First release only:** neither registry knows the provider yet. After 0.0.1 is published, an org owner adds
-   `GlueOps/proxmox` on the Terraform Registry (the GlueOps key is already on the namespace), and someone with public
-   GlueOps membership submits the OpenTofu registry's "add provider" form and its key form for the `glueops`
-   namespace.
+   **First release only:** neither registry knows the provider yet. Once 0.0.1 and its assets are published, in this
+   order:
+   1. On registry.terraform.io, an org owner with admin on this repo chooses Publish → Provider → the GlueOps namespace
+      → this repo. The GlueOps key is already on the namespace.
+   2. Whoever files the OpenTofu forms makes their GlueOps membership public (the key form rejects it otherwise).
+   3. On opentofu/registry, file the "Submit new Provider Signing Key" issue form for namespace `glueops`, provider name
+      blank. That also covers waggle, which has no key there today.
+   4. File the "Submit new Provider" issue form for `GlueOps/terraform-provider-proxmox`, through the web form.
+   5. Once both are merged, `tofu init` with each address and confirm 0.0.1 installs with a valid signature.
 
 ### Release gate
 
@@ -201,9 +206,10 @@ The gate runs locally, never in GitHub, so no PVE credentials ever reach the rep
 - **It fails for a real reason** (a config or code problem): fix forward. Mark the broken release as a pre-release
   (`gh release edit vX.Y.Z --prerelease`) so nobody picks it up, merge the fix as a `fix:` PR, and release the next
   patch version.
-- **Last resort, the workflow can't run at all:** an admin with the offline copy of the GlueOps key can check out the
-  tag (`git checkout vX.Y.Z`) and run `goreleaser release --clean --config .goreleaser.yaml` with `GPG_FINGERPRINT` and
-  `GITHUB_TOKEN` set. That puts the signing key on a workstation, and the release gets no attestation, so skip the
+- **Last resort, the workflow can't run at all:** an admin with the offline copy of the GlueOps key works in a **fresh
+  clone of the fork** (goreleaser publishes to the repo `origin` points at, which is bpg in the clone setup above):
+  `git clone https://github.com/GlueOps/terraform-provider-proxmox.git && cd terraform-provider-proxmox && git checkout vX.Y.Z`,
+  then `goreleaser release --clean --config .goreleaser.yaml` with `GPG_FINGERPRINT` and `GITHUB_TOKEN` set. That puts the signing key on a workstation, and the release gets no attestation, so skip the
   `gh attestation verify` step for it.
 
 ## Signing key and secrets
