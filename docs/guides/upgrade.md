@@ -19,7 +19,7 @@ This guide documents breaking changes across provider versions and the recommend
      required_providers {
        proxmox = {
          source  = "bpg/proxmox"
-         version = "~> 0.120.0" # x-release-please-version
+         version = "~> 0.122.0" # x-release-please-version
        }
      }
    }
@@ -37,7 +37,53 @@ This guide documents breaking changes across provider versions and the recommend
 
 -> **Tip:** Upgrade one minor version at a time when crossing multiple breaking changes. This makes it easier to isolate issues.
 
+## v0.122.0
+
+### Container rootfs `replicate` defaults to `true`
+
+The `disk.replicate` attribute of `proxmox_virtual_environment_container` now defaults to `true`, as documented and as Proxmox VE does, and `replicate = false` is applied on create. Before, the provider default was `false` but was never sent on create, so new containers were replicated while the state showed `false`, and `replicate = false` only took effect after a later change to the `disk` block.
+
+After upgrading, a container that does not set `replicate` and whose rootfs has `replicate=0` in Proxmox VE (for example after a `disk` change with the old default) plans an update to `replicate = true`. Other containers show no change.
+
+**Action required:** To keep the rootfs out of replication jobs, set `replicate = false` in the `disk` block before applying.
+
+### Container `cpu.cores` no longer defaults to `1`
+
+The `cpu.cores` attribute of `proxmox_virtual_environment_container` no longer defaults to `1`. A container created without `cores` now has no `cores` setting in Proxmox VE and can use all host cores, which is the Proxmox VE default. Before, the provider always sent `cores`, as `1` when it was not configured, so a container limited by `cpu.limit` alone could not be described, and any change to its `cpu` block pinned it to one core.
+
+Existing containers keep their current `cores` value and show no change after upgrading. Removing `cores` from the configuration no longer resets it to `1`: the container keeps its current value. Set `cores = 0` to remove the setting from an existing container. A clone whose `cpu` block does not set `cores` now keeps the value of its source container, before it was set to `1`. The upper bound is now `8192`, as in Proxmox VE.
+
+**Action required:** To keep new containers on a single core, set it explicitly:
+
+```terraform
+resource "proxmox_virtual_environment_container" "example" {
+  # ...
+  cpu {
+    cores = 1
+  }
+}
+```
+
+### Container `cpu.units` not in the configuration is removed
+
+A container that does not set `cpu.units` but has `cpuunits` in Proxmox VE, for example one created with a provider version before v0.102.0 (which always sent `1024`), planned the removal of its `cpu` block on every run, and the apply changed nothing. The apply now removes `cpuunits` from the container, so Proxmox VE uses its own default (`100` on cgroup2) and the next plan is empty. The `cores` value of such a container is not changed.
+
+**Action required:** To keep the current weight, set it explicitly, for example `units = 1024` in the `cpu` block, before applying.
+
 ## v0.121.0
+
+### `proxmox_acl` no longer adopts an existing ACL
+
+Creating a `proxmox_acl` (or `proxmox_virtual_environment_acl`) for a path, role and user, group or token that already has an ACL entry now fails with `Unable to Create ACL`, saying the ACL already exists. Before, the create succeeded and silently took over the existing entry, so a later `destroy` removed an ACL that Terraform never created. ACLs already in state are not affected.
+
+**Action required:** If an apply fails because the ACL already exists, import the ACL with the ID shown in the error (`{path}?{group|user@realm|user@realm!token}?{role}`), for example:
+
+```terraform
+import {
+  to = proxmox_acl.auditor
+  id = "/?acltest@pve?PVEAuditor"
+}
+```
 
 ### Container `wait_for_ip` waits after start
 

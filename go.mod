@@ -6,8 +6,8 @@ tool github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs
 
 require (
 	github.com/Microsoft/go-winio v0.6.4
-	github.com/avast/retry-go/v5 v5.0.0
-	github.com/brianvoe/gofakeit/v7 v7.18.1
+	github.com/avast/retry-go/v5 v5.1.1
+	github.com/brianvoe/gofakeit/v7 v7.18.2
 	github.com/diskfs/go-diskfs v1.9.4
 	github.com/google/go-cmp v0.7.0
 	github.com/google/go-querystring v1.2.0
@@ -28,7 +28,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	golang.org/x/crypto v0.58.0
 	golang.org/x/net v0.62.0
-	golang.org/x/sync v0.24.0
+	golang.org/x/sync v0.25.0
 )
 
 require (
