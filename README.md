@@ -1,5 +1,7 @@
 # Terraform / OpenTofu Provider for Proxmox VE
 
+> **GlueOps fork** of [bpg/terraform-provider-proxmox](https://github.com/bpg/terraform-provider-proxmox), published as `registry.terraform.io/GlueOps/proxmox` with the added `proxmox_cloudinit_bootstrap` resource. See [FORK.md](FORK.md). The badges and docs links below are upstream's.
+
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/bpg/terraform-provider-proxmox)](https://github.com/bpg/terraform-provider-proxmox/releases/latest)
 [![GitHub Release Date](https://img.shields.io/github/release-date/bpg/terraform-provider-proxmox?display_date=published_at)](https://github.com/bpg/terraform-provider-proxmox/releases/latest)
 [![Terraform Provider Downloads](https://img.shields.io/terraform/provider/dw/2185)](https://registry.terraform.io/providers/bpg/proxmox/latest)
@@ -23,7 +25,7 @@ The project is not affiliated with [Proxmox Server Solutions GmbH](https://www.p
 terraform {
   required_providers {
     proxmox = {
-      source = "bpg/proxmox"
+      source = "registry.terraform.io/GlueOps/proxmox"
     }
   }
 }
@@ -56,8 +58,8 @@ Terraform and OpenTofu version requirements are listed in the [provider document
 
 ## Security
 
-- Report vulnerabilities privately as described in [SECURITY.md](.github/SECURITY.md). Do not open public issues for them.
-- Published advisories are listed on the [security advisories](https://github.com/bpg/terraform-provider-proxmox/security/advisories) page.
+- Report vulnerabilities privately through the fork's [security advisories](https://github.com/GlueOps/terraform-provider-proxmox/security/advisories/new). Do not open public issues for them.
+- Published advisories are listed on the [security advisories](https://github.com/GlueOps/terraform-provider-proxmox/security/advisories) page.
 - Nearly all operations use the Proxmox VE API. Use an API token with only the privileges your resources need.
 - The few operations that require SSH run commands on the node through `sudo`. Use the sudoers configuration from the [SSH User](https://bpg.sh/docs#ssh-user) section of the documentation as written. Granting the SSH user unrestricted `sudo` access to binaries such as `qm` or `pvesm` is equivalent to giving it root on the host.
 

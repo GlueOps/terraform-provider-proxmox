@@ -1,0 +1,49 @@
+# Every path where the GlueOps fork differs from upstream, checked by scripts/glueops-sync-fixup.sh.
+# Format: <kind> <path>; a path ending in "/" covers everything under it. Kinds are explained in FORK.md.
+
+owned   .github/workflows/release-please.yml
+owned   .glueops/allowlist
+owned   .glueops/go-modules
+owned   .glueops/upstream-tag
+owned   .release-please-manifest.json
+owned   AGENTS.md
+owned   CHANGELOG.md
+owned   CLAUDE.md
+owned   FORK.md
+owned   release-please-config.json
+owned   renovate.json
+owned   scripts/glueops-dev.sh
+owned   scripts/glueops-sync-fixup.sh
+
+deleted .claude/
+deleted .cursorrules
+deleted .devcontainer/
+deleted .githooks/
+deleted .github/CODEOWNERS
+deleted .github/FUNDING.yml
+deleted .github/ISSUE_TEMPLATE/
+deleted .github/PULL_REQUEST_TEMPLATE.md
+deleted .github/SECURITY.md
+deleted .github/workflows/link-check.yml
+deleted .github/workflows/project-automation.yml
+deleted .github/workflows/publish.yml
+deleted .github/workflows/stale.yaml
+deleted .github/workflows/sync-docs.yml
+deleted .github/workflows/testacc.yml
+deleted .vscode/
+deleted GEMINI.md
+
+kept    .github/workflows/golangci-lint.yml
+kept    .github/workflows/test.yml
+
+feature docs/resources/cloudinit_bootstrap.md
+feature example/resource_cloudinit_bootstrap.tf
+feature example/variables.tf
+feature examples/resources/proxmox_cloudinit_bootstrap/
+feature fwprovider/nodes/cloudinitbootstrap/
+feature fwprovider/provider.go
+feature go.mod
+feature go.sum
+feature main.go
+feature proxmox/nodes/vms/vms.go
+feature proxmox/nodes/vms/vms_types.go
