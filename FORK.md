@@ -133,13 +133,14 @@ assets can be downloaded.
    If one shows up (or the version is wrong for any reason), merge a small PR whose description ends with
    `Release-As: X.Y.Z` (the version you want); release-please then proposes that version. Upstream entries in the notes keep bpg's `(#NNNN)`
    numbers, which link to this repo and 404; the commit links are right.
-2. **Run the release gate** (below; **you**: it needs the lab and PVE credentials). Post the result as a PR comment in
-   this exact format, and never paste raw output:
+2. **Run the release gate** (below). It's required before every release PR is merged. Post the result as a comment
+   on the release PR in this exact format, and never paste raw output (it can contain lab addresses):
    ```text
    Release gate for X.Y.Z at <commit>
    acceptance: --- PASS ×3 (TestAccResourceCloudInitBootstrap subtests)
-   lab plan: no replace, no destroy, no change to proxmox_virtual_environment_vm
+   leftovers: none
    ```
+   If any subtest fails or doesn't run, don't merge: fix it, or report the failure on the release PR.
 3. **Merge the release PR** (**you**, an admin) once every check is green:
    `gh pr merge <N> --repo GlueOps/terraform-provider-proxmox --admin --squash`.
 4. **Verify the assets** once the goreleaser job finishes: a zip per platform, `SHA256SUMS`, `SHA256SUMS.sig` and
@@ -172,39 +173,25 @@ assets can be downloaded.
 
 ### Release gate
 
-The gate runs locally, never in GitHub, so no PVE credentials ever reach the repo. It needs a dedicated two-node PVE
-cluster; [.glueops/release-gate-lab.md](.glueops/release-gate-lab.md) sets one up on Hetzner and fills in `testacc.env`.
+The gate runs the fork's acceptance tests against a dedicated two-node PVE lab on Hetzner. It runs locally, never in
+GitHub, so no PVE credentials ever reach the repo. [.glueops/release-gate-lab.md](.glueops/release-gate-lab.md) is the
+lab's runbook: what it needs (the Robot credentials in `~/.config/hetzner-robot.env`), how to rebuild it, and what to
+do when a step fails.
 
-- **Acceptance tests.**
-  1. Create a gitignored `testacc.env` in the repo root with these variables:
-     - `TF_ACC=1`
-     - `PROXMOX_VE_ENDPOINT`
-     - `PROXMOX_VE_API_TOKEN`
-     - `PROXMOX_VE_INSECURE` (only if needed)
-     - `PROXMOX_VE_ACC_NODE_NAME`
-     - `PROXMOX_VE_ACC_NODE_2_NAME`
-     - `PROXMOX_VE_ACC_CLOUDINIT_BRIDGE` and `PROXMOX_VE_ACC_CLOUDINIT_VLAN_ID`, for a bridge with DHCP and internet
-       access
-  2. The `local` datastore on both nodes needs the `import`, `images` and `iso` content types. Leave the SSH variables
-     out; the resource uses only the API.
-  3. Run the tests:
-     ```sh
-     scripts/glueops-dev.sh ./testacc TestAccResourceCloudInitBootstrap
-     ```
-  4. All 3 subtests must report `--- PASS`. Without `NODE_2_NAME` the migration subtest silently doesn't run.
-- **Lab plan with the release's code.**
-  1. Build the binary from the release PR's base (`main`), with the same Go minor version the release uses:
-     ```sh
-     git fetch glueops && git switch --detach glueops/main
-     scripts/glueops-dev.sh go build -trimpath -o dist/gate/terraform-provider-proxmox .
-     ```
-     That commit is the `<commit>` in the gate comment.
-  2. In a nonprod lab, point `dev_overrides` at the **absolute** path of `dist/gate/`. Key it to the address that
-     `tofu providers` shows for proxmox.
-  3. Run `TF_LOG=debug tofu plan 2>&1 | grep 'starting plugin.*terraform-provider-proxmox'` and confirm every line
-     shows the `dist/` path and none shows `.terraform/providers/`. Pipe straight to grep; don't keep debug logs.
-  4. Then run a normal plan. It must show no replace, no destroy and no change to any
-     `proxmox_virtual_environment_vm`, because an in-place VM update reboots the node.
+1. Test the code that will be released, the fork's `main`:
+   ```sh
+   git fetch glueops && git switch --detach glueops/main
+   ```
+   That commit is the `<commit>` in the gate comment.
+2. Make sure the lab is up: `scripts/glueops-acc-lab.sh check`. If it fails, or `testacc.env` is missing, rebuild the
+   lab with `scripts/glueops-acc-lab.sh all` (about 20 minutes; it wipes the two lab servers, which hold nothing else).
+3. Run the tests, then check that nothing was left behind:
+   ```sh
+   scripts/glueops-dev.sh ./testacc TestAccResourceCloudInitBootstrap
+   scripts/glueops-acc-lab.sh leftovers
+   ```
+4. All 3 subtests must report `--- PASS`. If only 2 ran, `testacc.env` is missing the second node: rerun
+   `scripts/glueops-acc-lab.sh token`.
 
 ### Emergency release
 
