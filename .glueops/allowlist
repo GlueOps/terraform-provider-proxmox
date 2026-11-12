@@ -19,6 +19,7 @@ deleted .cursorrules
 deleted .devcontainer/
 deleted .githooks/
 deleted .github/CODEOWNERS
+deleted .github/FUNDING.yml
 deleted .github/SECURITY.md
 deleted .github/workflows/link-check.yml
 deleted .github/workflows/project-automation.yml
