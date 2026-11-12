@@ -145,7 +145,7 @@ assets can be downloaded.
 4. **Verify the assets** once the goreleaser job finishes: a zip per platform, `SHA256SUMS`, `SHA256SUMS.sig` and
    `manifest.json`.
    ```sh
-   gh api repos/GlueOps/terraform-provider-proxmox/releases/tags/vX.Y.Z -q '{draft, immutable}'   # a 404 means it's still a draft
+   gh api repos/GlueOps/terraform-provider-proxmox/releases/tags/vX.Y.Z -q '{draft, immutable}'   # expect draft false, immutable true; a 404 means it's still a draft
    gh release download vX.Y.Z --repo GlueOps/terraform-provider-proxmox --dir /tmp/rel && cd /tmp/rel
    curl -fsSL https://raw.githubusercontent.com/opentofu/registry/main/keys/g/glueops/autoglue/provider-1773006671.asc | gpg --import
    gpg --fingerprint 52319649A2976E57   # must end in 5231 9649 A297 6E57
@@ -214,7 +214,8 @@ gh api --paginate "repos/GlueOps/terraform-provider-proxmox/releases?per_page=10
   -q '.[] | select(.tag_name == "vX.Y.Z") | "\(.id) draft=\(.draft)"'
 ```
 
-**Never delete a published release.** Once releases are immutable, its tag can never be used again. If the job says it
+**Never delete a published release.** Immutable releases are on for this repo (since v0.0.3): a published release's
+assets and tag are locked, and a deleted release's tag can never be used again. If the job says it
 found two releases for the tag, delete the draft whose id isn't the run's `release_id` (job 1's output), then re-run.
 
 - **Still a draft, the goreleaser job failed on something transient** (network, a runner hiccup): use **Re-run failed
