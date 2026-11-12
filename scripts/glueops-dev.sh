@@ -16,7 +16,8 @@ go_minor=$(printf '%s' "$go_version" | cut -d. -f1,2)
 [ -n "$go_minor" ] || { echo "glueops-dev: cannot read the go version from go.mod" >&2; exit 2; }
 
 run_args=(
-  --rm --user "$(id -u):$(id -g)"
+  # --init forwards Ctrl+C/SIGTERM, so a killed run (e.g. acceptance tests) doesn't keep running.
+  --rm --init --user "$(id -u):$(id -g)"
   -v "$root":/w -w /w
   -e HOME=/tmp
   -e GOTOOLCHAIN=local
@@ -37,9 +38,10 @@ fi
 
 [ $# -gt 0 ] || { sed -n '2,8p' "$0" >&2; exit 2; }
 
-image="glueops-tfpp-dev:go${go_minor}-tf${TERRAFORM_VERSION}"
+# Tagged by go.mod's full version so a go.mod bump rebuilds; --pull gets a Go patch at least that new.
+image="glueops-tfpp-dev:go${go_version}-tf${TERRAFORM_VERSION}"
 if ! docker image inspect "$image" >/dev/null 2>&1; then
-  docker build -q -t "$image" - >/dev/null <<EOF
+  docker build --pull -q -t "$image" - >/dev/null <<EOF
 FROM hashicorp/terraform:${TERRAFORM_VERSION} AS terraform
 FROM golang:${go_minor}
 COPY --from=terraform /bin/terraform /usr/local/bin/terraform
@@ -48,4 +50,4 @@ fi
 
 tty=()
 [ -t 0 ] && [ -t 1 ] && tty=(-it)
-exec docker run "${tty[@]}" "${run_args[@]}" "$image" "$@"
+exec docker run ${tty[@]+"${tty[@]}"} "${run_args[@]}" "$image" "$@"

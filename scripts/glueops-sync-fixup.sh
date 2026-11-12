@@ -11,6 +11,7 @@
 # --ack: a human has read the upstream build/workflow changes printed by a sync and accepts them.
 #
 # Exit codes: 0 ok, 1 usage or setup error, 3 drift or guard failure, 4 conflicts left to resolve by hand.
+# Needs bash 3.2+, git and Docker; no other tools beyond POSIX sed/awk/grep (macOS works).
 set -euo pipefail
 
 ROOT=$(git rev-parse --show-toplevel)
@@ -30,6 +31,12 @@ die() { echo "glueops-sync: $*" >&2; exit 1; }
 fail() { echo "DRIFT: $*" >&2; FAILS=$((FAILS + 1)); }
 
 recorded_tag() { tr -d '[:space:]' < .glueops/upstream-tag; }
+
+# Upstream tags are never fetched in bulk (FORK.md), so fetch the one we need explicitly.
+require_tag() {
+	git rev-parse -q --verify "$1^{commit}" >/dev/null ||
+		die "upstream tag $1 isn't in this clone; run: git fetch --no-tags origin tag $1"
+}
 manifest_version() { git show "$1:.release-please-manifest.json" | sed -n 's/.*"\.": *"\([^"]*\)".*/\1/p'; }
 
 # Allowlist lines as "kind<TAB>path".
@@ -52,7 +59,8 @@ rebrand_targets() {
 rebrand_stream() {
 	local path=$1 version=$2
 	sed -E -e "s#(source[[:space:]]*=[[:space:]]*)\"bpg/proxmox\"#\\1\"$SOURCE_NEW\"#" \
-		-e "/x-release-please-version/ s/[0-9]+\\.[0-9]+\\.[0-9]+/$version/" |
+		-e "/x-release-please-version/ s/[0-9]+\\.[0-9]+\\.[0-9]+/$version/" \
+		-e "/x-release-please-version/! s/(version[[:space:]]*=[[:space:]]*\")>= *[0-9]+\\.[0-9]+\\.[0-9]+\"/\\1>= 0.0.1\"/" |
 		case "$path" in
 		docs/index.md) insert_after '^# Proxmox Provider$' "$INDEX_NOTE" ;;
 		README.md) insert_after '^# Terraform / OpenTofu Provider for Proxmox VE$' "$README_NOTE" ;;
@@ -75,6 +83,13 @@ snapshot_tree() {
 	GIT_INDEX_FILE=$idx git add -A
 	GIT_INDEX_FILE=$idx git write-tree
 	rm -f "$idx"
+}
+
+# Whether the name-status diff has an A or M line for the path (exact) or under it (prefix).
+differs() {
+	awk -F'\t' -v p="$2" -v mode="$3" '
+		($1 == "A" || $1 == "M") && ($2 == p || (mode == "prefix" && index($2, p) == 1)) { found = 1 }
+		END { exit !found }' <<<"$1"
 }
 
 check_tree() {
@@ -108,9 +123,9 @@ check_tree() {
 		case "$kind" in
 		owned | feature)
 			if [[ $path == */ ]]; then
-				grep -qP "^[AM]\t\Q$path\E" <<<"$diff" || fail "$kind $path: nothing under it differs from upstream"
+				differs "$diff" "$path" prefix || fail "$kind $path: nothing under it differs from upstream"
 			else
-				grep -qP "^[AM]\t\Q$path\E$" <<<"$diff" || fail "$kind $path: listed but identical to upstream or missing"
+				differs "$diff" "$path" exact || fail "$kind $path: listed but identical to upstream or missing"
 			fi
 			;;
 		deleted)
@@ -130,9 +145,12 @@ check_tree() {
 		[ "$kind" = owned ] || [ "$kind" = kept ] || fail "$wf: workflow not listed as owned or kept (new upstream workflow?)"
 	done < <(git ls-tree --name-only "$tree" .github/workflows/)
 
-	git ls-tree -r --name-only "$tree" |
-		grep -E '(^|/)\.(claude|cursor[^/]*|gemini)(/|$)|(^|/)\.mcp\.json$|(^|/)GEMINI\.md$|./(AGENTS|CLAUDE)\.md$' |
-		while read -r path; do echo "DRIFT: $path: agent config (delete it)" >&2; echo x; done | grep -q . && FAILS=$((FAILS + 1))
+	local agent_files
+	agent_files=$(git ls-tree -r --name-only "$tree" |
+		grep -E '(^|/)\.(claude|cursor[^/]*|gemini)(/|$)|(^|/)\.mcp\.json$|(^|/)GEMINI\.md$|./(AGENTS|CLAUDE)\.md$' || true)
+	while read -r path; do
+		[ -z "$path" ] || fail "$path: agent config (delete it)"
+	done <<<"$agent_files"
 
 	while read -r path; do
 		if ! cmp -s <(git show "$tag:$path" | rebrand_stream "$path" "$version") <(git show "$tree:$path"); then
@@ -140,7 +158,7 @@ check_tree() {
 		fi
 	done <<<"$targets"
 
-	if ! cmp -s <(git show "$tree:release-please-config.json" | jq -r '.packages["."]["extra-files"][]' | LC_ALL=C sort) \
+	if ! cmp -s <(git show "$tree:release-please-config.json" | sed -n '/"extra-files"/,/]/p' | sed -n 's/^[[:space:]]*"\([^"]*\)",*$/\1/p' | LC_ALL=C sort) \
 		<(git grep -l x-release-please-version "$tree" -- "${REBRAND_SCOPE[@]}" | sed "s|^$tree:||" | LC_ALL=C sort); then
 		fail "release-please-config.json extra-files doesn't match the files carrying x-release-please-version"
 	fi
@@ -150,14 +168,15 @@ check_tree() {
 
 # Upstream changes between two tags that a human must read before pushing a sync branch.
 guard_upstream() {
-	local old=$1 new=$2 ack=$3 hits=0 kept
+	local old=$1 new=$2 ack=$3 hits=0 kept path
 	[ "$old" != "$(git rev-parse "$new^{commit}")" ] || return 0
 	if ! git diff --quiet "$old" "$new" -- "${GUARDED[@]}"; then
 		git diff "$old" "$new" -- "${GUARDED[@]}" >&2
 		echo "GUARD: upstream changed build inputs that run with the signing key (${GUARDED[*]})" >&2
 		hits=$((hits + 1))
 	fi
-	mapfile -t kept < <(entries HEAD | awk -F'\t' '$1 == "kept" { print $2 }')
+	kept=()
+	while read -r path; do kept+=("$path"); done < <(entries HEAD | awk -F'\t' '$1 == "kept" { print $2 }')
 	if ! git diff --quiet "$old" "$new" -- "${kept[@]}"; then
 		git diff "$old" "$new" -- "${kept[@]}" >&2
 		if git diff "$old" "$new" -- "${kept[@]}" | grep -E '^\+' | grep -qE 'permissions:|secrets\.|pull_request_target|workflow_run'; then
@@ -181,12 +200,15 @@ apply_rebrand() {
 }
 
 cmd_sync() {
-	local tag=$1 ack=$2 old new list path kind diskfs reviewed left=()
+	local tag=$1 ack=$2 old new list targets path kind diskfs reviewed left=()
 	new=$(git rev-parse "$tag^{commit}") || die "unknown tag $tag (git fetch --no-tags origin tag $tag)"
 	[ "$(git rev-parse -q --verify MERGE_HEAD)" = "$new" ] || die "run this during 'git merge $tag' (MERGE_HEAD must be $tag)"
-	old=$(git rev-parse "$(git show HEAD:.glueops/upstream-tag | tr -d '[:space:]')^{commit}")
+	old=$(git show HEAD:.glueops/upstream-tag | tr -d '[:space:]')
+	require_tag "$old"
+	old=$(git rev-parse "$old^{commit}")
 	git merge-base --is-ancestor "$old" "$new" || die "$tag is not newer than the recorded upstream tag"
 	list=$(entries HEAD)
+	targets=$(rebrand_targets "$tag")
 
 	# Owned files always keep our version, even when upstream's change merged in without a conflict
 	# (CHANGELOG.md does). Upstream's change is then reviewed from the diff printed below.
@@ -199,7 +221,7 @@ cmd_sync() {
 
 	while read -r path; do
 		kind=$(kind_of "$list" "$path")
-		if rebrand_targets "$tag" | grep -qxF "$path" || [ "$path" = go.mod ] || [ "$path" = go.sum ]; then
+		if grep -qxF "$path" <<<"$targets" || [ "$path" = go.mod ] || [ "$path" = go.sum ]; then
 			continue # rebuilt below
 		fi
 		case "$kind" in
@@ -215,6 +237,13 @@ cmd_sync() {
 		true
 	done
 
+	# Go files with conflict markers break go mod tidy and make docs, so stop here first.
+	if [ ${#left[@]} -gt 0 ]; then
+		printf 'Resolve by hand (take upstream, re-apply our feature lines), git add, then re-run sync:\n' >&2
+		printf '  %s\n' "${left[@]}" >&2
+		exit 4
+	fi
+
 	apply_rebrand "$tag"
 	diskfs=$(git show HEAD:go.mod | awk '$1 == "github.com/diskfs/go-diskfs" { print $2 }')
 	[ -n "$diskfs" ] || die "can't read the go-diskfs version from our go.mod"
@@ -225,16 +254,12 @@ cmd_sync() {
 	scripts/glueops-dev.sh make docs
 	git add -A -- go.mod go.sum .glueops/upstream-tag docs "${REBRAND_SCOPE[@]}"
 
-	mapfile -t reviewed < <(awk -F'\t' '$1 == "owned" || $1 == "deleted" { print $2 }' <<<"$list")
+	reviewed=()
+	while read -r path; do reviewed+=("$path"); done < <(awk -F'\t' '$1 == "owned" || $1 == "deleted" { print $2 }' <<<"$list")
 	echo "Upstream changes to files we own or deleted ($(git rev-parse --short "$old")..$tag), for the sync PR table:"
 	git diff --stat "$old" "$new" -- "${reviewed[@]}" ':!CHANGELOG.md' ':!.release-please-manifest.json' || true
 
 	guard_upstream "$old" "$tag" "$ack" || exit 3
-	if [ ${#left[@]} -gt 0 ]; then
-		printf 'Resolve by hand (take upstream, re-apply our feature lines), then re-run check:\n' >&2
-		printf '  %s\n' "${left[@]}" >&2
-		exit 4
-	fi
 	check_tree "$tag" "$(snapshot_tree)" || exit 3
 	echo "OK: sync to $tag passes. Next: build, test, lint, then commit the merge (see FORK.md)."
 }
@@ -287,8 +312,36 @@ self_test() {
 		echo "FAIL missing anchor not detected"; return 1
 	fi
 	echo "ok   missing anchor detected"
-	cmp -s <(git show "$tag:docs/index.md" | rebrand_stream docs/index.md 1.0.0) \
-		<(git show "$tag:docs/index.md" | rebrand_stream docs/index.md 1.0.0) && echo "ok   deterministic rebrand"
+	got=$(echo '      version = ">= 0.60.0"' | rebrand_stream examples/x.tf 9.8.7)
+	if [ "$got" != '      version = ">= 0.0.1"' ]; then
+		echo "FAIL lower-bound rewrite: $got"
+		return 1
+	fi
+	echo "ok   upstream lower bound rewritten"
+
+	expect_drift "kept workflow edited" "$( (git show "$base:.github/workflows/test.yml"; echo '# x') | tree_with "$base" add .github/workflows/test.yml)" "listed as kept"
+	expect_drift "extra-files out of date" "$(git show "$base:release-please-config.json" | grep -v '"docs/index.md"' | tree_with "$base" add release-please-config.json)" "extra-files"
+
+	apply_rebrand "$tag"
+	if [ "$(snapshot_tree)" != "$base" ]; then
+		echo "FAIL rebrand isn't idempotent: re-running it changed the tree (see git diff)"
+		return 1
+	fi
+	echo "ok   rebrand idempotent"
+
+	# Guard: fake upstream commits on top of the tag, so no real tag is needed.
+	guard_case() { # name, path, appended line
+		local t c
+		t=$( (git show "$tag:$2"; echo "$3") | tree_with "$(git rev-parse "$tag^{tree}")" add "$2")
+		c=$(git commit-tree "$t" -p "$tag" -m guard-test)
+		set +e
+		out=$(guard_upstream "$(git rev-parse "$tag^{commit}")" "$c" no 2>&1)
+		got=$?
+		set -e
+		if [ "$got" -eq 3 ] && grep -qF GUARD <<<"$out"; then echo "ok   $1"; else echo "FAIL $1 (exit $got)"; return 1; fi
+	}
+	guard_case "guard: goreleaser change" .goreleaser.yaml '# upstream change'
+	guard_case "guard: kept workflow gains permissions" .github/workflows/test.yml 'permissions: write-all'
 
 	docker run --rm -v "$ROOT/scripts":/s:ro koalaman/shellcheck:v0.10.0 /s/glueops-sync-fixup.sh /s/glueops-dev.sh &&
 		echo "ok   shellcheck"
@@ -302,12 +355,24 @@ for a in "$@"; do [ "$a" = --ack ] && ack=yes || args+=("$a"); done
 tag=${args[0]:-}
 case "$mode" in
 sync) [ -n "$tag" ] || die "usage: $0 sync <TAG> [--ack]"; cmd_sync "$tag" "$ack" ;;
-rebrand) apply_rebrand "${tag:-$(recorded_tag)}" ;;
+rebrand)
+	tag=${tag:-$(recorded_tag)}
+	require_tag "$tag"
+	apply_rebrand "$tag"
+	;;
 check)
 	tag=${tag:-$(recorded_tag)}
+	require_tag "$tag"
+	if ! git diff --quiet || [ -n "$(git ls-files --others --exclude-standard)" ]; then
+		echo "note: unstaged changes are part of this check; git add -A before you commit" >&2
+	fi
 	check_tree "$tag" "$(snapshot_tree)" || exit 3
 	echo "OK: working tree matches $ALLOWLIST against $tag"
 	;;
---self-test) self_test "${tag:-$(recorded_tag)}" ;;
+--self-test)
+	tag=${tag:-$(recorded_tag)}
+	require_tag "$tag"
+	self_test "$tag"
+	;;
 *) sed -n '2,13p' "$0" >&2; exit 1 ;;
 esac

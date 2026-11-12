@@ -39,6 +39,8 @@ Check which base a branch is on with `git merge-base --is-ancestor glueops/main 
   - Use `feat` for new behaviour and `fix` for bug fixes. `chore`, `ci` and `docs` are hidden from the changelog and don't cut a release.
   - Open PRs with `--repo GlueOps/terraform-provider-proxmox`, because `gh` otherwise targets bpg.
   - Squash-merge, except sync PRs, which merge with a merge commit (see FORK.md).
+  - The PR description becomes the squash commit's body, which release-please reads. Write it as prose; a line
+    starting with `feat:`, `fix:` or `BREAKING CHANGE:` adds a changelog entry.
 - **Work meant for bpg** (the branch is based on `origin/main`): follow upstream's rules.
   - Sign off with `git commit -s` (DCO).
   - Use upstream's scopes: `vm`, `lxc`, `provider`, `core`, `docs`, `ci`.
@@ -65,7 +67,7 @@ These are settled. Don't re-raise them in reviews.
 - Our versions are our own, starting at 0.0.1 and managed by release-please. Upstream commits that a sync brings in may drive bumps. `bump-minor-pre-major` is on.
 - The Go module path stays `github.com/bpg/terraform-provider-proxmox`, so imports are never rewritten. Renaming it would conflict on every sync.
 - The `GetFileFromAgent` helper stays in `proxmox/nodes/vms`, the same as in bpg PR #3260.
-- Docs and examples are rebranded to `registry.terraform.io/GlueOps/proxmox` by the fixup script. `example/` is not rebranded, because its `.tfrc` dev overrides are keyed to `bpg/proxmox`.
+- Docs and examples are rebranded to `registry.terraform.io/GlueOps/proxmox` by the fixup script, and upstream's `>= x.y.z` lower bounds become `>= 0.0.1`. `example/` is not rebranded, because its `.tfrc` dev overrides are keyed to `bpg/proxmox`.
 - There are no required status checks beyond the org's. People and agents check that every check is green before merging.
 - Actions are pinned to commit SHAs by hand. `sha_pinning_required` is off, and Renovate is disabled in the fork.
 - The release gate (acceptance tests plus a lab plan) runs locally and never in GitHub, so no PVE credentials go into the repo.

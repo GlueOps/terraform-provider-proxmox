@@ -2,7 +2,7 @@ terraform {
   required_providers {
     proxmox = {
       source  = "registry.terraform.io/GlueOps/proxmox"
-      version = ">= 0.60.0"
+      version = ">= 0.0.1"
     }
   }
 }

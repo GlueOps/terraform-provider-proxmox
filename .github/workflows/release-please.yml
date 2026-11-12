@@ -44,8 +44,8 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  # Separate job so a failed upload can be retried with "Re-run failed jobs" (job 1's outputs are kept),
-  # and so the signing key only enters runs that actually release.
+  # Separate job so the signing key only enters runs that actually release, and a failure can be retried with
+  # "Re-run failed jobs" (job 1's outputs are kept). Delete any assets it already uploaded first (see FORK.md).
   goreleaser:
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'

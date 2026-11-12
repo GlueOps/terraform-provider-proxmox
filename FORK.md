@@ -18,7 +18,7 @@ terraform {
 ```
 
 Use the full source address in both Terraform and OpenTofu. With OpenTofu the short `GlueOps/proxmox` resolves to the
-OpenTofu registry instead. That also works, but it's a different address in state.
+OpenTofu registry instead, which is a different address in state (and works only once the provider is listed there).
 
 Versions are our own, starting at 0.0.1. Each release's notes say which upstream version it's based on.
 `.glueops/upstream-tag` records the upstream tag that `main` is currently synced to.
@@ -38,10 +38,8 @@ fails if the tree differs anywhere else.
 | feature  | `fwprovider/nodes/cloudinitbootstrap/`, 5 shared files      | conflicts are resolved by hand                                      |
 | rebranded | docs/examples `source` and version lines, the README and index notes | rebuilt from upstream by the script                            |
 
-The **rebranded** files aren't listed in the allowlist. The script finds every file under `README.md`, `Makefile`,
-`docs/index.md`, `docs/guides/`, `docs/data-sources/` and `examples/` that has `source = "bpg/proxmox"` or an
-`x-release-please-version` marker. It checks that ours equals upstream's copy, rebranded. `example/` is left alone,
-because its `.tfrc` dev overrides are keyed to `bpg/proxmox`.
+The **rebranded** files aren't listed in the allowlist. The script derives them (`REBRAND_SCOPE`) and checks that ours
+equals upstream's copy, rebranded.
 
 ## Clone setup (once)
 
@@ -51,8 +49,11 @@ git remote rename origin glueops
 git remote add origin https://github.com/bpg/terraform-provider-proxmox.git
 git config remote.origin.tagOpt --no-tags    # never fetch upstream's tags; they'd collide with ours
 git config remote.glueops.tagOpt --no-tags
-git fetch origin glueops
+git fetch --multiple origin glueops
+git fetch --no-tags origin tag "$(cat .glueops/upstream-tag)"   # the scripts compare against it
 ```
+
+After this, local `main` tracks `glueops/main`, and `origin/main` is bpg's.
 
 **Never run `git push --tags`.** Our tags come only from release-please. A `release-tags` ruleset blocks `v*` tags from
 anyone else, but admins can bypass it.
@@ -62,26 +63,22 @@ anyone else, but admins can bypass it.
 Sync when you need upstream changes in a release. You don't have to sync every upstream release. An agent can follow
 these steps, but a human makes the decisions marked **you**.
 
-1. **Pick the upstream release tag** (`TAG`, e.g. `v0.123.0`) and fetch only that tag:
+1. **Pick the upstream release tag** (`TAG`, e.g. `v0.123.0`). Fetch only that tag and the one we're synced to:
    ```sh
-   git fetch --no-tags origin tag "$TAG"
+   git fetch --multiple origin glueops
+   git fetch --no-tags origin tag "$TAG" tag "$(git show glueops/main:.glueops/upstream-tag)"
    git switch -c "sync/$TAG" glueops/main
    git merge --no-ff --no-commit "$TAG"
    ```
-2. **Run the fixup.** It:
-   - restores our owned files;
-   - re-deletes the deleted ones;
-   - rebuilds the rebranded files;
-   - rebuilds `go.mod`/`go.sum` (upstream's, plus our `go-diskfs`);
-   - runs `make docs`;
-   - checks the tree.
+2. **Run the fixup.** It resolves the routine conflicts, rebrands, rebuilds `go.mod`/`go.sum`, runs `make docs`, then
+   checks the tree.
    ```sh
    scripts/glueops-sync-fixup.sh sync "$TAG"
    ```
    - Exit 3 with `GUARD:`: upstream changed `.goreleaser.yaml`, `terraform-registry-manifest.json`, or added
      permissions, secrets or risky triggers to a kept workflow. Those run in our release job or CI. **You** read the
      printed diff, then re-run with `--ack`.
-   - Exit 4: feature files conflict. Take upstream's version, re-apply our lines, `git add`, and re-run.
+   - Exit 4: feature files conflict. Take upstream's version, re-apply our lines, `git add`, and re-run `sync`.
    - Exit 3 with `DRIFT:`: something isn't covered.
      - A new upstream workflow or agent file: delete it (`git rm`) and add a `deleted` entry. **You** decide if it
        should be `kept` instead.
@@ -95,7 +92,10 @@ these steps, but a human makes the decisions marked **you**.
    | `AGENTS.md` | new testing note | ignore (ours points to `docs/adr/`) |
 
    **You** decide each row. Then port the accepted ones into our files.
-4. **Build, test, lint and docs** (AGENTS.md has the commands), then `scripts/glueops-sync-fixup.sh check`.
+4. **Build, test, lint and docs** (AGENTS.md has the commands). Then stage everything and check what you'll commit:
+   ```sh
+   git add -A && scripts/glueops-sync-fixup.sh check "$TAG"
+   ```
 5. **Commit and open the PR.**
    ```sh
    git commit --no-edit
@@ -170,8 +170,8 @@ The gate runs locally, never in GitHub, so no PVE credentials ever reach the rep
        -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
        goreleaser/goreleaser:v2.20.1 build --snapshot --clean --single-target
      ```
-  2. In a nonprod lab, point `dev_overrides` at `dist/terraform-provider-proxmox_linux_amd64_v1/`. Key it to the
-     address that `tofu providers` shows for proxmox.
+  2. In a nonprod lab, point `dev_overrides` at the **absolute** path of
+     `dist/terraform-provider-proxmox_linux_amd64_v1/`. Key it to the address that `tofu providers` shows for proxmox.
   3. Run `TF_LOG=debug tofu plan 2>&1 | grep 'starting plugin.*terraform-provider-proxmox'` and confirm every line
      shows the `dist/` path and none shows `.terraform/providers/`. Pipe straight to grep; don't keep debug logs.
   4. Then run a normal plan. It must show no replace, no destroy and no change to any
@@ -203,10 +203,8 @@ The gate runs locally, never in GitHub, so no PVE credentials ever reach the rep
 
 ## Feature work
 
-- **Meant for bpg:** branch from `origin/main` and follow upstream's rules (`git commit -s`, no trailers). Open the PR
-  against bpg, then merge the same commits into a fork branch from `glueops/main`.
-- **Fork-only:** branch from `glueops/main` and open the PR with `--repo GlueOps/terraform-provider-proxmox`.
-- **Keep the footprint small:** new files go in our package. If a change has to touch another upstream file, add it to
-  the allowlist as `feature`, and expect to resolve it on syncs.
+Commit rules per branch are in AGENTS.md. Beyond those:
 
-The local `main` branch tracks bpg. Start fork work from `glueops/main`, not `main`.
+- **Meant for bpg:** open the PR against bpg from a branch off `origin/main`, then merge the same commits into a fork
+  branch off `glueops/main`.
+- **Touching another upstream file:** add it to the allowlist as `feature`, and expect to resolve it on syncs.
