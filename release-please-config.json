@@ -1,6 +1,6 @@
 {
     "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
-    "signoff":  "Pavel Boldyrev <627562+bpg@users.noreply.github.com>",
+    "bootstrap-sha": "778fa791c7dc4f4e8f8ddf50e93140e86fd0cc5b",
     "packages": {
         ".": {
             "changelog-path": "CHANGELOG.md",
@@ -38,9 +38,10 @@
                 {
                     "type": "chore",
                     "section": "Miscellaneous",
-                    "hidden": false
+                    "hidden": true
                 }
-            ]
+            ],
+            "initial-version": "0.0.1"
         }
     }
-  }
+}
