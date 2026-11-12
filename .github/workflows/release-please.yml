@@ -100,6 +100,8 @@ jobs:
             > "$RUNNER_TEMP/goreleaser.yaml"
           yq -e '.release.use_existing_draft == true and (.release.draft // false) == false
             and (.release.replace_existing_draft // false) == false
+            and (.release.disable // false) == false and (.release.skip_upload // false) == false
+            and ((.release.mode // "keep-existing") == "keep-existing")
             and ((.release.name_template // "{{.Tag}}") == "{{.Tag}}")' "$RUNNER_TEMP/goreleaser.yaml" > /dev/null
 
       # go.mod pins x.y.0; build with the newest x.y patch (as upstream's releases do), not the bare minimum.

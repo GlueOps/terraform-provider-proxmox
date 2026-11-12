@@ -120,7 +120,8 @@ these steps, but a human makes the decisions marked **you**.
 release-please keeps a release PR (`chore(main): release X.Y.Z`) open against `main`. Merging it creates the tag and a
 **draft** release. A second job in `.github/workflows/release-please.yml` then checks the tag and the draft, builds and
 signs the assets, uploads them to the draft and publishes it, then attests them. A release is never visible without its
-assets, so the registries (which act on publish) always see a complete one.
+assets: the Terraform Registry ingests on publish, and the OpenTofu registry, which polls tags, skips a tag until its
+assets can be downloaded.
 
 1. **Check the version** in the release PR. An upstream `Release-As:` footer would force its number on us:
    ```sh
@@ -144,7 +145,7 @@ assets, so the registries (which act on publish) always see a complete one.
 4. **Verify the assets** once the goreleaser job finishes: a zip per platform, `SHA256SUMS`, `SHA256SUMS.sig` and
    `manifest.json`.
    ```sh
-   gh api repos/GlueOps/terraform-provider-proxmox/releases/tags/vX.Y.Z -q '{draft, immutable}'   # draft must be false
+   gh api repos/GlueOps/terraform-provider-proxmox/releases/tags/vX.Y.Z -q '{draft, immutable}'   # a 404 means it's still a draft
    gh release download vX.Y.Z --repo GlueOps/terraform-provider-proxmox --dir /tmp/rel && cd /tmp/rel
    curl -fsSL https://raw.githubusercontent.com/opentofu/registry/main/keys/g/glueops/autoglue/provider-1773006671.asc | gpg --import
    gpg --fingerprint 52319649A2976E57   # must end in 5231 9649 A297 6E57
@@ -213,7 +214,8 @@ gh api --paginate "repos/GlueOps/terraform-provider-proxmox/releases?per_page=10
   -q '.[] | select(.tag_name == "vX.Y.Z") | "\(.id) draft=\(.draft)"'
 ```
 
-**Never delete a published release.** Once releases are immutable, its tag can never be used again.
+**Never delete a published release.** Once releases are immutable, its tag can never be used again. If the job says it
+found two releases for the tag, delete the draft whose id isn't the run's `release_id` (job 1's output), then re-run.
 
 - **Still a draft, the goreleaser job failed on something transient** (network, a runner hiccup): use **Re-run failed
   jobs** on the workflow run (within 30 days). goreleaser replaces any assets the failed attempt left on the draft.
@@ -231,7 +233,8 @@ gh api --paginate "repos/GlueOps/terraform-provider-proxmox/releases?per_page=10
   `git clone https://github.com/GlueOps/terraform-provider-proxmox.git && cd terraform-provider-proxmox && git checkout vX.Y.Z`.
   Write the same derived config as the workflow, **outside the clone** (goreleaser refuses a dirty tree):
   `yq '.release.use_existing_draft = true | .release.replace_existing_artifacts = true' .goreleaser.yaml > /tmp/goreleaser.yaml`,
-  then run `goreleaser release --clean --config /tmp/goreleaser.yaml` with
+  check it with the workflow's `yq -e` expression (step "Prepare the goreleaser config"), then run
+  `goreleaser release --clean --config /tmp/goreleaser.yaml` with
   `GPG_FINGERPRINT=$(gpg --with-colons --fingerprint 52319649A2976E57 | awk -F: '/^fpr/ { print $10; exit }')` and a
   `GITHUB_TOKEN` that's fine-grained, limited to this repo with contents write, short-lived, and revoked afterwards.
   That puts the signing key on a workstation, and the release gets no attestation, so skip the
