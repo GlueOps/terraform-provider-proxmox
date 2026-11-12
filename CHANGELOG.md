@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.5](https://github.com/GlueOps/terraform-provider-proxmox/compare/v0.0.4...v0.0.5) (2026-11-12)
+
+
+### Bug Fixes
+
+* **lab:** clear errors from check and load, one answer for a failed check ([#15](https://github.com/GlueOps/terraform-provider-proxmox/issues/15)) ([239b6a4](https://github.com/GlueOps/terraform-provider-proxmox/commit/239b6a4ddcedadab400385470c2a30048bccbb98))
+
 ## [0.0.4](https://github.com/GlueOps/terraform-provider-proxmox/compare/v0.0.3...v0.0.4) (2026-11-12)
 
 

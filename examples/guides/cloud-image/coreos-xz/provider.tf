@@ -2,7 +2,7 @@ terraform {
   required_providers {
     proxmox = {
       source  = "registry.terraform.io/GlueOps/proxmox"
-      version = "0.0.4" # x-release-please-version
+      version = "0.0.5" # x-release-please-version
     }
     http = {
       source  = "hashicorp/http"
