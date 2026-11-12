@@ -17,7 +17,7 @@ Retrieves information about an existing file in a Proxmox Virtual Environment no
 terraform {
   required_providers {
     proxmox = {
-      source  = "bpg/proxmox"
+      source  = "registry.terraform.io/GlueOps/proxmox"
       version = ">= 0.60.0"
     }
   }

@@ -5,6 +5,8 @@ title: "Provider: Proxmox Virtual Environment"
 
 # Proxmox Provider
 
+-> **GlueOps fork.** This is the GlueOps fork of [bpg/proxmox](https://registry.terraform.io/providers/bpg/proxmox/latest), adding the `proxmox_cloudinit_bootstrap` resource. Use the full source address `registry.terraform.io/GlueOps/proxmox` with Terraform and OpenTofu. Versions are the fork's own; see [FORK.md](https://github.com/GlueOps/terraform-provider-proxmox/blob/main/FORK.md).
+
 This provider for [Terraform](https://www.terraform.io/) / [OpenTofu](https://opentofu.org/) is used for interacting with resources supported by [Proxmox VE](https://www.proxmox.com/en/products/proxmox-virtual-environment/overview).
 The provider needs to be configured with the proper endpoint and credentials before it can be used.
 
@@ -33,8 +35,8 @@ To use this provider, you only need:
 terraform {
   required_providers {
     proxmox = {
-      source  = "bpg/proxmox"
-      version = "~> 0.122.0" # x-release-please-version
+      source  = "registry.terraform.io/GlueOps/proxmox"
+      version = "~> 0.0.0" # x-release-please-version
     }
   }
 }
@@ -58,8 +60,8 @@ provider "proxmox" {
 terraform {
   required_providers {
     proxmox = {
-      source  = "bpg/proxmox"
-      version = "~> 0.122.0" # x-release-please-version
+      source  = "registry.terraform.io/GlueOps/proxmox"
+      version = "~> 0.0.0" # x-release-please-version
     }
   }
 }

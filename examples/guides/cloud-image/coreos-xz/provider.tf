@@ -1,8 +1,8 @@
 terraform {
   required_providers {
     proxmox = {
-      source  = "bpg/proxmox"
-      version = "0.122.0" # x-release-please-version
+      source  = "registry.terraform.io/GlueOps/proxmox"
+      version = "0.0.0" # x-release-please-version
     }
     http = {
       source  = "hashicorp/http"
