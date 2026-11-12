@@ -102,4 +102,3 @@ These are settled. Don't re-raise them in reviews.
 - Actions are pinned to commit SHAs by hand. `sha_pinning_required` is off, and Renovate is disabled in the fork.
 - The release gate is the fork's acceptance tests against the Hetzner lab. It runs locally and never in GitHub, so no PVE
   credentials go into the repo. Consumers such as the GlueKube module are tested separately, not as part of this gate.
-- Release 1 of a consuming module may not change any `proxmox_virtual_environment_vm`, because an in-place update reboots nodes.
