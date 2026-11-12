@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.3](https://github.com/GlueOps/terraform-provider-proxmox/compare/v0.0.2...v0.0.3) (2026-11-12)
+
+
+### docs
+
+* note that immutable releases are on ([#11](https://github.com/GlueOps/terraform-provider-proxmox/issues/11)) ([8e7a408](https://github.com/GlueOps/terraform-provider-proxmox/commit/8e7a408f523bd9256a005da3dc43dc7a6c89c590))
+
 ## [0.0.2](https://github.com/GlueOps/terraform-provider-proxmox/compare/v0.0.1...v0.0.2) (2026-11-12)
 
 
