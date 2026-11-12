@@ -9,14 +9,16 @@ VMs, so never point the script or the tests at servers that run anything real.
 
 ## What you need
 
-- **Two Hetzner dedicated servers**, ordered in Robot, in the same location, each with 2 NVMe disks. The current lab
-  uses Robot server numbers **3112535** (becomes `pve1`) and **3113374** (`pve2`). Override with `LAB_SERVERS`.
-- **A Robot webservice user** (Robot → Settings → Web service and app settings), in a file only you can read:
+- **Two Hetzner dedicated servers**, ordered in Robot, in the same location, each with 2 NVMe disks.
+- **A Robot webservice user** (Robot → Settings → Web service and app settings) and the two servers' Robot numbers,
+  in a file only you can read. The first server becomes `pve1`:
   ```sh
   # ~/.config/hetzner-robot.env   (chmod 600; never commit it, never print it)
   HETZNER_ROBOT_USER='...'
   HETZNER_ROBOT_PASSWORD='...'
+  LAB_SERVERS='<pve1 server number> <pve2 server number>'
   ```
+  The GlueOps admins who own the lab keep this file.
 - **On the machine that runs it:** `bash`, `ssh`, `curl`, `python3` and `git`, plus Docker for the tests.
 - **Run it directly** on your workstation or devcontainer, **not** through `scripts/glueops-dev.sh`: it needs SSH and
   the Robot API. The tests' Docker containers must reach the internet through the same public IP. If they don't, add
@@ -48,7 +50,8 @@ Most of the time is reboots, which run one node after the other.
 
 **Output.** Each stage prints one progress line per step; the full command output goes to
 `~/.cache/glueops-acc-lab/build.log` (`LAB_LOG`). On a failure, the script prints the end of that log. It never prints
-the credentials, the token secret or the node IPs.
+the credentials or the token secret, and it masks IP addresses as `<ip>` (except in the `ips` stage), so its output
+is safe to quote.
 
 **Re-running.** Every stage can be re-run. To start over completely, run `all` again; `rescue` is the stage that wipes
 the servers. Nothing local needs deleting first: the lab key (`~/.ssh/glueops-acc-lab`) is reused and `testacc.env` is
@@ -82,6 +85,7 @@ You never need to open `testacc.env` or Robot to find a node.
 
 | Symptom | Cause and fix |
 | ------- | ------------- |
+| `install` stops with "isn't in rescue" on a re-run | A previous run already rebooted that node into Debian. Run `rescue install` to start the install over. |
 | `install`: installimage prints only `Cancelled.` | The real reason is in `/root/debug.txt` on the server (the script prints its error lines). `ESP missing`: the layout needs an EFI partition, which the script includes. |
 | A node doesn't come back after a reboot | These servers sometimes hang on a soft reboot. The script waits 8 minutes, then sends up to 2 hardware resets through Robot. If it still fails, rerun `rescue` and look at the server in Robot. |
 | `rescue` times out | Rescue mode may not have armed. Rerun the stage, which re-arms it. If it keeps failing, check the server's status in Robot. |

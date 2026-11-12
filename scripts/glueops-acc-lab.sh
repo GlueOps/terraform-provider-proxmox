@@ -22,7 +22,7 @@
 #
 # Settings (environment):
 #   ROBOT_ENV      file with HETZNER_ROBOT_USER / HETZNER_ROBOT_PASSWORD (default ~/.config/hetzner-robot.env)
-#   LAB_SERVERS    Robot server numbers, pve1 first (default: "3112535 3113374")
+#   LAB_SERVERS    Robot server numbers, pve1 first, e.g. "1234567 7654321" (required; usually set in ROBOT_ENV)
 #   LAB_ALLOW_IPS  extra IPs allowed to reach the nodes (this machine's public IP is always added)
 #   LAB_MY_IP      this machine's public IP for the firewall (default: looked up at https://ifconfig.me)
 #   TESTACC_ENV    where to write testacc.env (default: ./testacc.env in the repo root)
@@ -31,7 +31,6 @@ set -euo pipefail
 
 ROOT=$(git rev-parse --show-toplevel)
 ROBOT_ENV=${ROBOT_ENV:-$HOME/.config/hetzner-robot.env}
-LAB_SERVERS=${LAB_SERVERS:-"3112535 3113374"}
 TESTACC_ENV=${TESTACC_ENV:-$ROOT/testacc.env}
 KEY=${LAB_KEY:-$HOME/.ssh/glueops-acc-lab}
 LAB_LOG=${LAB_LOG:-$HOME/.cache/glueops-acc-lab/build.log}
@@ -41,18 +40,21 @@ CLUSTER=glueops-acc
 BRIDGE=vmbr1
 SUBNET=10.10.10
 
-log() { echo "[$(date +%T)] $*"; }
-die() { echo "glueops-acc-lab: $*" >&2; exit 1; }
+# Output may end up in PR comments, so IPv4 addresses are masked everywhere except in stage "ips".
+mask() { sed -E 's/\b([0-9]{1,3}\.){3}[0-9]{1,3}\b/<ip>/g'; }
+log() { echo "[$(date +%T)] $*" | mask; }
+die() { echo "glueops-acc-lab: $*" | mask >&2; exit 1; }
 # Runs a command (stdin passes through) with its output in $LAB_LOG; on failure shows the end of the log and stops.
 quiet() {
 	echo "--- $(date +%T) $*" >>"$LAB_LOG"
-	"$@" >>"$LAB_LOG" 2>&1 || { tail -n 30 "$LAB_LOG" >&2; die "failed (full output: $LAB_LOG)"; }
+	"$@" >>"$LAB_LOG" 2>&1 || { tail -n 30 "$LAB_LOG" | mask >&2; die "failed (full output: $LAB_LOG)"; }
 }
 
-robot() { # method path [curl args...]; prints the JSON body
+robot() { # method path [curl args...]; prints the JSON body. The credentials go in on stdin, not the command line.
 	local m=$1 p=$2
 	shift 2
-	curl -fsS -X "$m" -u "$HETZNER_ROBOT_USER:$HETZNER_ROBOT_PASSWORD" "$API$p" "$@"
+	printf 'user = "%s:%s"\n' "$HETZNER_ROBOT_USER" "$HETZNER_ROBOT_PASSWORD" |
+		curl -fsS -K - -X "$m" "$API$p" "$@"
 }
 
 load() {
@@ -61,6 +63,7 @@ load() {
 	# shellcheck disable=SC1090
 	. "$ROBOT_ENV"
 	set +a
+	[ -n "${LAB_SERVERS:-}" ] || die "set LAB_SERVERS (the two Robot server numbers, pve1 first) in $ROBOT_ENV"
 	read -r -a SERVERS <<<"$LAB_SERVERS"
 	[ ${#SERVERS[@]} = 2 ] || die "LAB_SERVERS must name exactly 2 servers"
 	IPS=()
@@ -76,7 +79,7 @@ ssh_opts=(-o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFil
 on() { # node-index command...
 	local i=$1
 	shift
-	ssh "${ssh_opts[@]}" -i "$KEY" "root@${IPS[$i]}" "$@"
+	ssh "${ssh_opts[@]}" -i "$KEY" "root@${IPS[$i]}" "$@" 2> >(mask >&2)
 }
 both() { on 0 "$@" && on 1 "$@"; }
 
@@ -97,7 +100,7 @@ reboot_node() { # index expect-command
 	on "$i" 'systemctl reboot' >/dev/null 2>&1 || true
 	sleep 30
 	until wait_ssh "$i" 480 "$test"; do
-		[ $resets -lt 2 ] || die "${NAMES[$i]} (${IPS[$i]}) didn't come back after 2 hardware resets. Boot it into rescue (stage rescue) and check the console in Robot."
+		[ $resets -lt 2 ] || die "${NAMES[$i]} didn't come back after 2 hardware resets. Boot it into rescue (stage rescue) and check the console in Robot."
 		resets=$((resets + 1))
 		log "${NAMES[$i]}: not back after 8 minutes, hardware reset $resets/2 via Robot"
 		robot POST "/reset/${SERVERS[$i]}" -d type=hw >/dev/null
@@ -155,6 +158,9 @@ st_pve() {
 set -euo pipefail
 ip=$1 name=$2
 export DEBIAN_FRONTEND=noninteractive
+# A re-run after an interrupted run: finish any half-configured packages, and wait for a still-running apt.
+dpkg --configure -a
+apt() { apt-get -o DPkg::Lock::Timeout=300 "$@"; }
 # PVE needs the hostname to resolve to the public IP, not 127.0.1.1.
 sed -i "/[[:space:]]$name\([[:space:]]\|$\)/d" /etc/hosts
 echo "$ip $name.acc.internal $name" >> /etc/hosts
@@ -168,9 +174,9 @@ Suites: trixie
 Components: pve-no-subscription
 Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
 SRC
-apt-get update -q
-apt-get full-upgrade -yq
-apt-get install -yq proxmox-default-kernel
+apt update -q
+apt full-upgrade -yq
+apt install -yq proxmox-default-kernel
 EOF
 	done
 	for i in 0 1; do reboot_node "$i" 'uname -r | grep -q pve'; done
@@ -179,11 +185,13 @@ EOF
 		quiet on "$i" 'bash -s' <<'EOF'
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
+dpkg --configure -a
+apt() { apt-get -o DPkg::Lock::Timeout=300 "$@"; }
 echo "postfix postfix/main_mailer_type select Local only" | debconf-set-selections
-apt-get install -yq proxmox-ve postfix open-iscsi chrony
+apt install -yq proxmox-ve postfix open-iscsi chrony
 # The enterprise repos need a subscription; the no-subscription repo above is enough here.
 rm -f /etc/apt/sources.list.d/pve-enterprise.sources /etc/apt/sources.list.d/ceph.sources
-apt-get remove -yq linux-image-amd64 'linux-image-6.12*' os-prober || true
+apt remove -yq linux-image-amd64 'linux-image-6.12*' os-prober || true
 update-grub
 # Key-only SSH: installimage leaves password logins on.
 sed -i 's/^#\?PasswordAuthentication .*/PasswordAuthentication no/' /etc/ssh/sshd_config
@@ -263,13 +271,18 @@ st_storage() {
 
 st_firewall() {
 	local me allow ip n=0
-	me=${LAB_MY_IP:-$(curl -fsS https://ifconfig.me)} || die "can't look up this machine's public IP; set LAB_MY_IP"
+	# -4: the nodes are reached over IPv4; an IPv6 address here would lock this machine out.
+	me=${LAB_MY_IP:-$(curl -4fsS https://ifconfig.me)} || die "can't look up this machine's public IPv4; set LAB_MY_IP"
 	allow="$me ${IPS[0]} ${IPS[1]} ${LAB_ALLOW_IPS:-}"
 	{
 		echo '[OPTIONS]'
 		echo 'enable: 1'
 		echo 'policy_in: DROP'
 		echo 'policy_out: ACCEPT'
+		echo
+		# PVE otherwise treats the node's whole Hetzner subnet (shared with other customers) as trusted local_network.
+		echo '[ALIASES]'
+		echo "local_network ${IPS[0]}/32"
 		echo
 		echo '[IPSET management]'
 		for ip in $allow; do echo "$ip"; done
@@ -282,6 +295,7 @@ st_firewall() {
 	quiet both 'pve-firewall restart'
 	sleep 5
 	for i in 0 1; do on "$i" true || die "lost SSH to ${NAMES[$i]} after the firewall change; fix it from rescue"; done
+	on 0 "pve-firewall localnet | grep -q 'local network.*${IPS[0]}/32'" || die "pve-firewall didn't take the local_network alias"
 	for ip in $allow; do n=$((n + 1)); done
 	log "firewall on: $n IPs allowed (this machine, both nodes, LAB_ALLOW_IPS)"
 }
@@ -296,6 +310,7 @@ st_token() {
 	[ -n "$secret" ] || die "no token secret returned"
 	(
 		umask 077
+		rm -f "$TESTACC_ENV" # a pre-existing file would keep its (maybe readable) mode
 		cat >"$TESTACC_ENV" <<EOF
 TF_ACC=1
 PROXMOX_VE_ENDPOINT="https://${IPS[0]}:8006/"
@@ -315,7 +330,7 @@ st_check() {
 	local ep tok
 	ep=$(sed -n 's/^PROXMOX_VE_ENDPOINT="\(.*\)"$/\1/p' "$TESTACC_ENV")
 	tok=$(sed -n 's/^PROXMOX_VE_API_TOKEN="\(.*\)"$/\1/p' "$TESTACC_ENV")
-	pve() { curl -fsSk -H "Authorization: PVEAPIToken=$tok" "${ep}api2/json/$1"; }
+	pve() { printf 'header = "Authorization: PVEAPIToken=%s"\n' "$tok" | curl -fsSk -K - "${ep}api2/json/$1"; }
 	pve nodes | python3 -c 'import sys,json; d=json.load(sys.stdin)["data"]; print("nodes:", sorted(n["node"]+"="+n["status"] for n in d)); assert sorted(n["node"] for n in d if n["status"]=="online")==["pve1","pve2"], "both nodes must be online"'
 	pve storage/local | python3 -c 'import sys,json; c=set(json.load(sys.stdin)["data"]["content"].split(",")); print("local content:", ",".join(sorted(c))); assert {"import","images","iso"} <= c'
 	for n in pve1 pve2; do
@@ -325,10 +340,14 @@ st_check() {
 }
 
 st_leftovers() {
-	local vms files
-	vms=$(on 0 "pvesh get /cluster/resources --type vm --output-format json" |
-		python3 -c 'import sys,json; print("\n".join(v["node"]+": "+str(v.get("name")) for v in json.load(sys.stdin)))')
-	files=$(for i in 0 1; do on "$i" "pvesm list local 2>/dev/null | awk 'NR>1 && \$1 ~ /cloudinit-|TestAcc/ {print \"${NAMES[$i]}: \" \$1}'"; done)
+	local vms files f json
+	json=$(on 0 "pvesh get /cluster/resources --type vm --output-format json") || die "can't list the cluster's VMs"
+	vms=$(python3 -c 'import sys,json; print("\n".join(v["node"]+": "+str(v.get("name")) for v in json.load(sys.stdin)))' <<<"$json")
+	files=
+	for i in 0 1; do
+		f=$(on "$i" "pvesm list local") || die "can't list local on ${NAMES[$i]}"
+		files+=$(awk -v n="${NAMES[$i]}" 'NR>1 && $1 ~ /cloudinit-|TestAcc/ {print n ": " $1}' <<<"$f")
+	done
 	if [ -z "$vms$files" ]; then
 		log "no leftovers: 0 VMs, 0 test files on local"
 		return 0
@@ -347,15 +366,17 @@ if [ "$1" = ssh ]; then
 	shift 2
 	exec ssh "${ssh_opts[@]}" -i "$KEY" "root@${IPS[$n]}" "$@"
 fi
-for stage in "$@"; do
-	[ "$stage" = all ] && set -- rescue install pve network cluster storage firewall token check && break
-done
-for stage in "$@"; do
+if [ "$*" = all ]; then
+	set -- rescue install pve network cluster storage firewall token check
+fi
+for stage in "$@"; do # validate everything first: a typo must not leave the servers half-done
 	case "$stage" in
-	rescue | install | pve | network | cluster | storage | firewall | token | check | leftovers | ips)
-		log "== $stage"
-		"st_$stage"
-		;;
+	rescue | install | pve | network | cluster | storage | firewall | token | check | leftovers | ips) ;;
+	all) die "all must be the only argument" ;;
 	*) die "unknown stage: $stage" ;;
 	esac
+done
+for stage in "$@"; do
+	log "== $stage"
+	"st_$stage"
 done

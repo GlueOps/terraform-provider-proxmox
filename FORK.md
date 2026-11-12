@@ -140,7 +140,8 @@ assets can be downloaded.
    acceptance: --- PASS ×3 (TestAccResourceCloudInitBootstrap subtests)
    leftovers: none
    ```
-   If any subtest fails or doesn't run, don't merge: fix it, or report the failure on the release PR.
+   If any subtest fails or doesn't run, don't merge: fix it, or report the failure on the release PR, in a few words
+   of your own rather than raw output.
 3. **Merge the release PR** (**you**, an admin) once every check is green:
    `gh pr merge <N> --repo GlueOps/terraform-provider-proxmox --admin --squash`.
 4. **Verify the assets** once the goreleaser job finishes: a zip per platform, `SHA256SUMS`, `SHA256SUMS.sig` and
