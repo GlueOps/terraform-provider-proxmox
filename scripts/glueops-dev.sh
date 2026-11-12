@@ -22,6 +22,7 @@ run_args=(
   -e GOTOOLCHAIN=local
   -e GOMODCACHE=/w/.gocache/mod
   -e GOCACHE=/w/.gocache/build
+  -e GOFLAGS=-modcacherw  # so .gocache can be deleted without root
   # The repo is owned by the host user; without this git (and go's VCS stamping) refuses to run.
   -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*'
 )
