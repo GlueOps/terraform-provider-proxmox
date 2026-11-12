@@ -169,8 +169,9 @@ check_tree() {
 	done <<<"$agent_files"
 
 	while read -r path; do
-		if ! git show "$tag:$path" | rebrand_stream "$path" "$version" >/dev/null 2>&1; then
-			fail "$path: upstream changed a line the rebrand anchors on; update rebrand_stream in $0"
+		local why
+		if ! why=$(git show "$tag:$path" | rebrand_stream "$path" "$version" 2>&1 >/dev/null); then
+			fail "$path: upstream changed a line the rebrand anchors on ($why); update rebrand_stream in $0"
 		elif ! cmp -s <(git show "$tag:$path" | rebrand_stream "$path" "$version") <(git show "$tree:$path"); then
 			fail "$path: differs from upstream's copy rebranded (run: $0 rebrand $tag)"
 		fi
@@ -181,7 +182,8 @@ check_tree() {
 	marked=$(git grep -l x-release-please-version "$tree" -- "${REBRAND_SCOPE[@]}" | sed "s|^$tree:||" | LC_ALL=C sort)
 	if [ "$listed" != "$marked" ]; then
 		fail "release-please-config.json extra-files doesn't match the files carrying x-release-please-version: $(
-			diff <(echo "$listed") <(echo "$marked") | sed -n 's/^> /add /p; s/^< /remove /p' | tr '\n' ' ')"
+			comm -13 <(echo "$listed") <(echo "$marked") | sed 's/^/add /' | tr '\n' ' '
+			comm -23 <(echo "$listed") <(echo "$marked") | sed 's/^/remove /' | tr '\n' ' ')"
 	fi
 
 	[ "$FAILS" -eq 0 ] || return 3
@@ -216,18 +218,34 @@ apply_rebrand() {
 	local tag=$1 stage=${2:-no} version path
 	version=$(manifest_version HEAD)
 	while read -r path; do
+		rm -f "$path.glueops-tmp" # never write through a symlink planted from the container
 		if ! git show "$tag:$path" | rebrand_stream "$path" "$version" >"$path.glueops-tmp"; then
 			rm -f "$path.glueops-tmp"
-			echo "glueops-sync: $path: upstream changed a line the rebrand anchors on; update rebrand_stream in $0" >&2
+			echo "glueops-sync: $path: upstream changed a line the rebrand anchors on; update rebrand_stream in $0, then re-run" >&2
 			exit 3
 		fi
+		rm -f "$path"
 		mv "$path.glueops-tmp" "$path"
 		if [ "$stage" = yes ]; then git add -- "$path"; fi
 	done < <(rebrand_targets "$tag")
 }
 
+# "module@version" for each module in .glueops/go-modules where our go.mod is ahead of upstream's (or upstream lacks it).
+go_pins() {
+	local tag=$1 mod ours theirs
+	while read -r mod; do
+		[ -n "$mod" ] || continue
+		ours=$(git show HEAD:go.mod | awk -v m="$mod" '$1 == m { print $2 } $1 == "require" && $2 == m { print $3 }' | head -1)
+		[ -n "$ours" ] || die "$mod is listed in .glueops/go-modules but isn't in our go.mod"
+		theirs=$(git show "$tag:go.mod" | awk -v m="$mod" '$1 == m { print $2 } $1 == "require" && $2 == m { print $3 }' | head -1)
+		if [ -z "$theirs" ] || [ "$(printf '%s\n%s\n' "$ours" "$theirs" | sort -V | tail -1)" != "$theirs" ]; then
+			printf '%s@%s ' "$mod" "$ours"
+		fi
+	done < <(git show HEAD:.glueops/go-modules | sed -e 's/#.*//' -e 's/[[:space:]]//g')
+}
+
 cmd_sync() {
-	local tag=$1 ack=$2 old new list targets path kind diskfs reviewed log left=()
+	local tag=$1 ack=$2 old new list targets path kind gets reviewed log left=()
 	require_tag "$tag"
 	new=$(git rev-parse "$tag^{commit}")
 	[ "$(git rev-parse -q --verify MERGE_HEAD)" = "$new" ] || die "run this during 'git merge $tag' (MERGE_HEAD must be $tag)"
@@ -238,10 +256,12 @@ cmd_sync() {
 	list=$(entries HEAD)
 	targets=$(rebrand_targets "$tag")
 
-	# Owned files always keep our version, even when upstream's change merged in without a conflict
-	# (CHANGELOG.md does). Upstream's change is then reviewed from the diff printed below.
+	# Owned files that upstream also has always keep our version, even when upstream's change merged in without a
+	# conflict (CHANGELOG.md does); the change is reviewed from the diff printed below. Owned files upstream doesn't
+	# have (our tooling, FORK.md, the allowlist) can't be touched by the merge, so they're left alone: re-running sync
+	# keeps your edits to them.
 	awk -F'\t' '$1 == "owned" && $2 !~ /\/$/ { print $2 }' <<<"$list" | while read -r path; do
-		if git cat-file -e "HEAD:$path" 2>/dev/null; then
+		if git cat-file -e "HEAD:$path" 2>/dev/null && git cat-file -e "$tag:$path" 2>/dev/null; then
 			git checkout HEAD -- "$path"
 			git add -- "$path"
 		fi
@@ -272,20 +292,23 @@ cmd_sync() {
 
 	# Each rewritten file is staged at once, so `git merge --abort` still works if this run is interrupted.
 	apply_rebrand "$tag" yes
-	diskfs=$(git show HEAD:go.mod | awk '$1 == "github.com/diskfs/go-diskfs" { print $2 }')
-	[ -n "$diskfs" ] || die "can't read the go-diskfs version from our go.mod"
+	gets=$(go_pins "$tag")
+	rm -f go.mod go.sum .glueops/upstream-tag
 	git show "$tag:go.mod" >go.mod
 	git show "$tag:go.sum" >go.sum
-	git add -- go.mod go.sum
 	echo "$tag" >.glueops/upstream-tag
-	git add -- .glueops/upstream-tag
+	git add -- go.mod go.sum .glueops/upstream-tag
 	log=$(git rev-parse --git-path glueops-sync.log)
 	echo "Running go mod tidy and make docs in Docker (output: $log)..."
-	if ! { scripts/glueops-dev.sh sh -c "go get github.com/diskfs/go-diskfs@$diskfs && go mod tidy" &&
+	# Stage whatever the Docker steps rewrote even if they fail or are interrupted, so `git merge --abort` works.
+	trap 'git add -A -- go.mod go.sum docs "${REBRAND_SCOPE[@]}"; exit 130' INT TERM
+	if ! { scripts/glueops-dev.sh sh -c "${gets:+go get $gets && }go mod tidy" &&
 		scripts/glueops-dev.sh make docs; } >"$log" 2>&1; then
+		git add -A -- go.mod go.sum docs "${REBRAND_SCOPE[@]}"
 		tail -n 30 "$log" >&2
 		die "go mod tidy or make docs failed (full output: $log); fix it and re-run sync"
 	fi
+	trap - INT TERM
 	git add -A -- go.mod go.sum docs "${REBRAND_SCOPE[@]}"
 
 	reviewed=()
@@ -395,6 +418,11 @@ self_test() {
 	echo "ok   other providers' lower bounds kept"
 	if ! git show "$base:README.md" | grep -qF "$ADVISORIES/new"; then echo "FAIL README security link"; return 1; fi
 	echo "ok   README security link"
+
+	# go_pins: ours wins only when upstream is older or missing.
+	got=$(go_pins "$tag")
+	if [[ $got != *"github.com/diskfs/go-diskfs@"* ]]; then echo "FAIL go pin for a module upstream lacks: '$got'"; return 1; fi
+	echo "ok   go module pins"
 
 	docker run --rm -v "$ROOT/scripts":/s:ro koalaman/shellcheck:v0.10.0 /s/glueops-sync-fixup.sh /s/glueops-dev.sh &&
 		echo "ok   shellcheck"

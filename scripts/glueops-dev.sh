@@ -22,6 +22,7 @@ run_args=(
   # Code run here (go generate, tests, tools) comes from upstream syncs. Keep it from writing git hooks or
   # config that would run on the host, or from editing the fork tooling the host runs next.
   -v "$root/.git":/w/.git:ro -v "$root/scripts":/w/scripts:ro -v "$root/.glueops":/w/.glueops:ro
+  -v "$root/.github":/w/.github:ro
   -e HOME=/tmp
   -e GOTOOLCHAIN=local
   -e GOMODCACHE=/w/.gocache/mod
@@ -30,6 +31,12 @@ run_args=(
   # The repo is owned by the host user; without this git (and go's VCS stamping) refuses to run.
   -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*'
 )
+
+# Our owned files (release workflow, release config, FORK.md, AGENTS.md...) are read-only in the container too.
+while read -r owned; do
+  case "$owned" in scripts/* | .glueops/* | .github/* | */) continue ;; esac
+  if [ -f "$root/$owned" ]; then run_args+=(-v "$root/$owned:/w/$owned:ro"); fi
+done < <(sed -e 's/#.*//' "$root/.glueops/allowlist" | awk '$1 == "owned" { print $2 }')
 
 if [ "${1:-}" = lint ]; then
   shift

@@ -1,0 +1,3 @@
+# Go modules where our go.mod must stay at least at our version. A sync takes upstream's go.mod, then re-applies
+# our version of each module listed here when upstream's is older or missing. See FORK.md (Dependabot).
+github.com/diskfs/go-diskfs

@@ -39,6 +39,8 @@ Check which base a branch is on with `git merge-base --is-ancestor glueops/main 
   - Use Conventional Commits; release-please reads them to set our version.
   - Use `feat` for new behaviour and `fix` for bug fixes; `deps`, `perf` and `revert` also cut a release. `chore`, `ci`
     and `docs` are hidden from the changelog and don't cut a release.
+  - Retitle a GitHub "Revert" PR to `revert: <original title>` before merging; release-please can't parse
+    `Revert "..."` and drops it.
   - Open PRs with `--repo GlueOps/terraform-provider-proxmox`, because `gh` otherwise targets bpg.
   - Squash-merge, except sync PRs, which merge with a merge commit (see FORK.md).
   - The PR description becomes the squash commit's body, which release-please reads. Write it as prose; a line

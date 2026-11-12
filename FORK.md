@@ -123,11 +123,13 @@ assets.
 
 1. **Check the version** in the release PR. An upstream `Release-As:` footer would force its number on us:
    ```sh
-   last=$(gh release view --repo GlueOps/terraform-provider-proxmox --json tagName -q .tagName)
-   git fetch --no-tags glueops tag "$last" && git log --format=%B "$last..glueops/main" | grep -i '^release-as:'
+   git fetch glueops   # the sync was merged on GitHub; without this the check misses its commits
+   last=$(gh release view --repo GlueOps/terraform-provider-proxmox --json tagName -q .tagName 2>/dev/null) &&
+     git fetch --no-tags glueops tag "$last" || last=$(sed -n 's/.*"bootstrap-sha": *"\([0-9a-f]*\)".*/\1/p' release-please-config.json)
+   git log --format=%B "$last..glueops/main" | grep -i '^release-as:' || echo "no Release-As footers"
    ```
    If one shows up (or the version is wrong for any reason), merge a small PR whose description ends with
-   `Release-As: 0.N.0`; release-please then proposes that version. Upstream entries in the notes keep bpg's `(#NNNN)`
+   `Release-As: X.Y.Z` (the version you want); release-please then proposes that version. Upstream entries in the notes keep bpg's `(#NNNN)`
    numbers, which link to this repo and 404; the commit links are right.
 2. **Run the release gate** (below; **you**: it needs the lab and PVE credentials). Post the result as a PR comment in
    this exact format, and never paste raw output:
@@ -160,7 +162,8 @@ assets.
       → this repo. The GlueOps key is already on the namespace.
    2. Whoever files the OpenTofu forms makes their GlueOps membership public (the key form rejects it otherwise).
    3. On opentofu/registry, file the "Submit new Provider Signing Key" issue form for namespace `glueops`, provider name
-      blank. That also covers waggle, which has no key there today.
+      blank, pasting the armored public key from the URL in "Verify the assets". That also covers waggle, which has no
+      key there today.
    4. File the "Submit new Provider" issue form for `GlueOps/terraform-provider-proxmox`, through the web form.
    5. Once both are merged, `tofu init` with each address and confirm 0.0.1 installs with a valid signature.
 
@@ -186,10 +189,12 @@ The gate runs locally, never in GitHub, so no PVE credentials ever reach the rep
      ```
   4. All 3 subtests must report `--- PASS`. Without `NODE_2_NAME` the migration subtest silently doesn't run.
 - **Lab plan with the release's code.**
-  1. Build the binary with the same Go minor version the release uses:
+  1. Build the binary from the release PR's base (`main`), with the same Go minor version the release uses:
      ```sh
+     git fetch glueops && git switch --detach glueops/main
      scripts/glueops-dev.sh go build -trimpath -o dist/gate/terraform-provider-proxmox .
      ```
+     That commit is the `<commit>` in the gate comment.
   2. In a nonprod lab, point `dev_overrides` at the **absolute** path of `dist/gate/`. Key it to the address that
      `tofu providers` shows for proxmox.
   3. Run `TF_LOG=debug tofu plan 2>&1 | grep 'starting plugin.*terraform-provider-proxmox'` and confirm every line
@@ -200,7 +205,12 @@ The gate runs locally, never in GitHub, so no PVE credentials ever reach the rep
 ### Emergency release
 
 - **The goreleaser job failed on something transient** (network, a runner hiccup):
-  1. If it uploaded some assets, delete them with `gh release delete-asset vX.Y.Z <name> --repo GlueOps/terraform-provider-proxmox`.
+  1. If it uploaded some assets, delete them all:
+     ```sh
+     for a in $(gh release view vX.Y.Z --repo GlueOps/terraform-provider-proxmox --json assets -q '.assets[].name'); do
+       gh release delete-asset vX.Y.Z "$a" --yes --repo GlueOps/terraform-provider-proxmox
+     done
+     ```
   2. Use **Re-run failed jobs** on the workflow run (within 30 days). A new run won't release again, because
      release-please already created the release.
 - **It fails for a real reason** (a config or code problem): fix forward. Mark the broken release as a pre-release
@@ -209,7 +219,10 @@ The gate runs locally, never in GitHub, so no PVE credentials ever reach the rep
 - **Last resort, the workflow can't run at all:** an admin with the offline copy of the GlueOps key works in a **fresh
   clone of the fork** (goreleaser publishes to the repo `origin` points at, which is bpg in the clone setup above):
   `git clone https://github.com/GlueOps/terraform-provider-proxmox.git && cd terraform-provider-proxmox && git checkout vX.Y.Z`,
-  then `goreleaser release --clean --config .goreleaser.yaml` with `GPG_FINGERPRINT` and `GITHUB_TOKEN` set. That puts the signing key on a workstation, and the release gets no attestation, so skip the
+  then `goreleaser release --clean --config .goreleaser.yaml` with
+  `GPG_FINGERPRINT=$(gpg --with-colons --fingerprint 52319649A2976E57 | awk -F: '/^fpr/ { print $10; exit }')` and a
+  `GITHUB_TOKEN` that's fine-grained, limited to this repo with contents write, short-lived, and revoked afterwards.
+  That puts the signing key on a workstation, and the release gets no attestation, so skip the
   `gh attestation verify` step for it.
 
 ## Signing key and secrets
@@ -227,9 +240,11 @@ The gate runs locally, never in GitHub, so no PVE credentials ever reach the rep
 - **Workflow token:** the repo's default workflow token is read-only. Renovate is disabled (`renovate.json`), because
   upstream's Renovate keeps dependencies current and syncs bring those bumps in. Upstream's `.github/renovate.json5`
   stays only to avoid sync conflicts; the root `renovate.json` overrides it.
-- **Dependabot:** security updates are off (vulnerability alerts stay on). A Dependabot bump to `go.mod` would be undone
-  by the next sync, which takes upstream's `go.mod`. When an alert matters, sync to an upstream release that fixes it,
-  or bump the module in a `fix(deps):` PR and re-apply it after each sync until upstream catches up.
+- **Dependabot:** security updates are off (vulnerability alerts stay on). A sync takes upstream's `go.mod`, then
+  re-applies our version of each module in `.glueops/go-modules` where upstream's is older (today just go-diskfs).
+  When an alert matters, sync to an upstream release that fixes it. If upstream hasn't fixed it yet, bump the module in
+  a `fix(deps):` PR **and add it to `.glueops/go-modules` in the same PR**, so syncs keep the bump until upstream
+  catches up; remove it from the list once upstream's version is newer.
 
 ## Feature work
 
