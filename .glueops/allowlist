@@ -20,6 +20,7 @@ deleted .devcontainer/
 deleted .githooks/
 deleted .github/CODEOWNERS
 deleted .github/FUNDING.yml
+deleted .github/PULL_REQUEST_TEMPLATE.md
 deleted .github/SECURITY.md
 deleted .github/workflows/link-check.yml
 deleted .github/workflows/project-automation.yml

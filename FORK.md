@@ -221,6 +221,9 @@ The gate runs locally, never in GitHub, so no PVE credentials ever reach the rep
 - **Workflow token:** the repo's default workflow token is read-only. Renovate is disabled (`renovate.json`), because
   upstream's Renovate keeps dependencies current and syncs bring those bumps in. Upstream's `.github/renovate.json5`
   stays only to avoid sync conflicts; the root `renovate.json` overrides it.
+- **Dependabot:** security updates are off (vulnerability alerts stay on). A Dependabot bump to `go.mod` would be undone
+  by the next sync, which takes upstream's `go.mod`. When an alert matters, sync to an upstream release that fixes it,
+  or bump the module in a `fix(deps):` PR and re-apply it after each sync until upstream catches up.
 
 ## Feature work
 
