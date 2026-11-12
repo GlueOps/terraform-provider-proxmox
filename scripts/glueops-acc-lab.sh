@@ -295,7 +295,8 @@ st_firewall() {
 	quiet both 'pve-firewall restart'
 	sleep 5
 	for i in 0 1; do on "$i" true || die "lost SSH to ${NAMES[$i]} after the firewall change; fix it from rescue"; done
-	on 0 "pve-firewall localnet | grep -q 'local network.*${IPS[0]}/32'" || die "pve-firewall didn't take the local_network alias"
+	on 0 "pve-firewall localnet | grep -qE 'using user defined local_network: ${IPS[0]}(/32)?\$'" ||
+		die "pve-firewall didn't take the local_network alias"
 	for ip in $allow; do n=$((n + 1)); done
 	log "firewall on: $n IPs allowed (this machine, both nodes, LAB_ALLOW_IPS)"
 }
