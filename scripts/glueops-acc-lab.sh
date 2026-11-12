@@ -67,8 +67,15 @@ load() {
 	read -r -a SERVERS <<<"$LAB_SERVERS"
 	[ ${#SERVERS[@]} = 2 ] || die "LAB_SERVERS must name exactly 2 servers"
 	IPS=()
+	local s j
 	for s in "${SERVERS[@]}"; do
-		IPS+=("$(robot GET "/server/$s" | python3 -c 'import sys,json; print(json.load(sys.stdin)["server"]["server_ip"])')")
+		if ! j=$(robot GET "/server/$s" 2>&1); then
+			case $j in
+			*"error: 404"*) die "Robot has no server $s: it's cancelled or LAB_SERVERS is wrong. A human orders new servers and sets LAB_SERVERS (see .glueops/release-gate-lab.md)" ;;
+			*) die "Robot request for server $s failed ($(mask <<<"$j" | head -1)): check the credentials in $ROBOT_ENV and the network" ;;
+			esac
+		fi
+		IPS+=("$(python3 -c 'import sys,json; print(json.load(sys.stdin)["server"]["server_ip"])' <<<"$j")")
 	done
 	[ -f "$KEY" ] || ssh-keygen -q -t ed25519 -N '' -C glueops-acc-lab -f "$KEY"
 	mkdir -p "$(dirname "$LAB_LOG")"
@@ -327,15 +334,29 @@ EOF
 }
 
 st_check() {
-	[ -r "$TESTACC_ENV" ] || die "no $TESTACC_ENV; run the token stage"
-	local ep tok
+	[ -r "$TESTACC_ENV" ] || die "no $TESTACC_ENV: run the token stage (or all, to rebuild the lab)"
+	local ep tok out
 	ep=$(sed -n 's/^PROXMOX_VE_ENDPOINT="\(.*\)"$/\1/p' "$TESTACC_ENV")
 	tok=$(sed -n 's/^PROXMOX_VE_API_TOKEN="\(.*\)"$/\1/p' "$TESTACC_ENV")
-	pve() { printf 'header = "Authorization: PVEAPIToken=%s"\n' "$tok" | curl -fsSk -K - "${ep}api2/json/$1"; }
-	pve nodes | python3 -c 'import sys,json; d=json.load(sys.stdin)["data"]; print("nodes:", sorted(n["node"]+"="+n["status"] for n in d)); assert sorted(n["node"] for n in d if n["status"]=="online")==["pve1","pve2"], "both nodes must be online"'
-	pve storage/local | python3 -c 'import sys,json; c=set(json.load(sys.stdin)["data"]["content"].split(",")); print("local content:", ",".join(sorted(c))); assert {"import","images","iso"} <= c'
+	pve() { printf 'header = "Authorization: PVEAPIToken=%s"\n' "$tok" | curl -fsSk --connect-timeout 10 -K - "${ep}api2/json/$1" 2>&1; }
+	# One answer for every failure: which fix to try, cheapest first.
+	if ! out=$(pve nodes); then
+		if on 0 true 2>/dev/null; then
+			die "PVE API on pve1 refused the request ($(echo "$out" | mask | head -1)). The nodes are up: run \"$0 firewall token check\"; if that still fails, rebuild with \"$0 all\"."
+		fi
+		die "pve1 doesn't answer SSH or the API: the lab is down or gone, or the firewall doesn't allow this machine's IP. If this isn't the machine that built the lab, run \"$0 firewall\" from that one with LAB_ALLOW_IPS set; otherwise rebuild with \"$0 all\" (about 20 minutes)."
+	fi
+	expect() { # fix python-expression-on-d (the parsed JSON's data); prints the message, or the fix on failure
+		python3 -c "import sys,json
+d=json.load(sys.stdin)['data']
+ok, msg = $2
+print(msg) if ok else sys.exit('check failed: ' + msg)" || die "$1"
+	}
+	local reboot="a node is offline: see \"A node doesn't come back after a reboot\" in .glueops/release-gate-lab.md, or rebuild with \"$0 all\""
+	echo "$out" | expect "$reboot" '(sorted(n["node"] for n in d if n["status"]=="online")==["pve1","pve2"], "nodes: "+", ".join(sorted(n["node"]+"="+n["status"] for n in d)))'
+	pve storage/local | expect "rerun \"$0 storage check\"" '({"import","images","iso"} <= set(d["content"].split(",")), "local content: "+d["content"])'
 	for n in pve1 pve2; do
-		pve "nodes/$n/network?type=bridge" | python3 -c "import sys,json; d=[x for x in json.load(sys.stdin)['data'] if x['iface']=='$BRIDGE']; assert d, '$n has no $BRIDGE'; print('$n $BRIDGE:', d[0].get('cidr'), 'active' if d[0].get('active') else 'INACTIVE')"
+		pve "nodes/$n/network?type=bridge" | expect "rerun \"$0 network check\"" "(any(x['iface']=='$BRIDGE' and x.get('active') for x in d), '$n $BRIDGE: ' + (', '.join(str(x.get('cidr')) + (' active' if x.get('active') else ' INACTIVE') for x in d if x['iface']=='$BRIDGE') or 'missing'))"
 	done
 	log "lab ready: run scripts/glueops-dev.sh ./testacc TestAccResourceCloudInitBootstrap, then: $0 leftovers"
 }
@@ -365,7 +386,7 @@ load
 if [ "$1" = ssh ]; then
 	case "${2:-}" in pve1) n=0 ;; pve2) n=1 ;; *) die "usage: $0 ssh pve1|pve2 [command...]" ;; esac
 	shift 2
-	exec ssh "${ssh_opts[@]}" -i "$KEY" "root@${IPS[$n]}" "$@"
+	exec ssh "${ssh_opts[@]}" -i "$KEY" "root@${IPS[$n]}" "$@" 2> >(mask >&2)
 fi
 if [ "$*" = all ]; then
 	set -- rescue install pve network cluster storage firewall token check

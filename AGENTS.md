@@ -64,8 +64,10 @@ Releases go through release-please: merging work to `main` opens a `chore(main):
 release PR is merged, the release gate must pass.** FORK.md has the steps ("Releasing" and "Release gate"); in short:
 
 1. `git fetch glueops && git switch --detach glueops/main`
-2. `scripts/glueops-acc-lab.sh check`. If it fails, rebuild the lab: `scripts/glueops-acc-lab.sh all`. That needs
-   the Robot credentials in `~/.config/hetzner-robot.env`; if they're missing, stop and ask a human.
+2. `scripts/glueops-acc-lab.sh check`. If it fails, do what it says: the quick fix (`firewall token check`) when the
+   nodes are up, or a rebuild (`scripts/glueops-acc-lab.sh all`) when they're down. A rebuild needs the Robot
+   credentials and server numbers in `~/.config/hetzner-robot.env`; if they're missing, or the script says Robot has
+   no such server, stop and ask a human. Never order or cancel servers yourself.
 3. `scripts/glueops-dev.sh ./testacc TestAccResourceCloudInitBootstrap`: all 3 subtests must PASS.
 4. `scripts/glueops-acc-lab.sh leftovers`: it must report none.
 5. Post the gate result on the release PR in FORK.md's fixed format, merge (an admin, with `--admin --squash`), then
