@@ -172,7 +172,8 @@ assets can be downloaded.
 
 ### Release gate
 
-The gate runs locally, never in GitHub, so no PVE credentials ever reach the repo.
+The gate runs locally, never in GitHub, so no PVE credentials ever reach the repo. It needs a dedicated two-node PVE
+cluster; [.glueops/release-gate-lab.md](.glueops/release-gate-lab.md) sets one up on Hetzner and fills in `testacc.env`.
 
 - **Acceptance tests.**
   1. Create a gitignored `testacc.env` in the repo root with these variables:
