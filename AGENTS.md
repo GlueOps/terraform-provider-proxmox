@@ -26,7 +26,11 @@ scripts/glueops-dev.sh go test ./...
 scripts/glueops-dev.sh lint                      # golangci-lint at the Makefile's version
 scripts/glueops-dev.sh make docs                 # regenerate docs; CI fails if this leaves a diff
 scripts/glueops-sync-fixup.sh --self-test        # after changing fork tooling
+scripts/glueops-acc-lab.sh all                   # rebuild the release gate lab (wipes the 2 lab servers); runs on the host
 ```
+
+The release gate (FORK.md) runs acceptance tests against a Hetzner lab; `.glueops/release-gate-lab.md` covers building
+it and what to do when a stage fails.
 
 Don't use `make lint` or `make build` on the host: they install or run tools outside Docker.
 
@@ -53,6 +57,21 @@ Check which base a branch is on with `git merge-base --is-ancestor glueops/main 
   - Never put `Claude-Session:` trailers or `claude.ai/code/...` links in commits, PRs, issues or comments.
   - Never publish internal hostnames, IPs, VLANs or cluster names.
 - **Before any merge:** every check on the PR must be green, not just the required ones. A red check means stop.
+
+## Releasing
+
+Releases go through release-please: merging work to `main` opens a `chore(main): release X.Y.Z` PR. **Before that
+release PR is merged, the release gate must pass.** FORK.md has the steps ("Releasing" and "Release gate"); in short:
+
+1. `git fetch glueops && git switch --detach glueops/main`
+2. `scripts/glueops-acc-lab.sh check`. If it fails, rebuild the lab: `scripts/glueops-acc-lab.sh all`. That needs
+   the Robot credentials in `~/.config/hetzner-robot.env`; if they're missing, stop and ask a human.
+3. `scripts/glueops-dev.sh ./testacc TestAccResourceCloudInitBootstrap`: all 3 subtests must PASS.
+4. `scripts/glueops-acc-lab.sh leftovers`: it must report none.
+5. Post the gate result on the release PR in FORK.md's fixed format, merge (an admin, with `--admin --squash`), then
+   verify the release as FORK.md says.
+
+If any step fails, don't merge the release PR. Never print the Robot credentials or `testacc.env`.
 
 ## Code conventions (upstream's, summarised)
 
@@ -81,5 +100,5 @@ These are settled. Don't re-raise them in reviews.
 - Never delete the `feat/cloudinit-iso` branch: it's the head of bpg PR #3260, and deleting it closes that PR. The
   `protect-upstream-pr-branch` ruleset blocks deletion.
 - Actions are pinned to commit SHAs by hand. `sha_pinning_required` is off, and Renovate is disabled in the fork.
-- The release gate (acceptance tests plus a lab plan) runs locally and never in GitHub, so no PVE credentials go into the repo.
-- Release 1 of a consuming module may not change any `proxmox_virtual_environment_vm`, because an in-place update reboots nodes.
+- The release gate is the fork's acceptance tests against the Hetzner lab. It runs locally and never in GitHub, so no PVE
+  credentials go into the repo. Consumers such as the GlueKube module are tested separately, not as part of this gate.

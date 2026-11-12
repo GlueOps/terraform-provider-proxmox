@@ -4,6 +4,7 @@
 owned   .github/workflows/release-please.yml
 owned   .glueops/allowlist
 owned   .glueops/go-modules
+owned   .glueops/release-gate-lab.md
 owned   .glueops/upstream-tag
 owned   .release-please-manifest.json
 owned   AGENTS.md
@@ -12,6 +13,7 @@ owned   CLAUDE.md
 owned   FORK.md
 owned   release-please-config.json
 owned   renovate.json
+owned   scripts/glueops-acc-lab.sh
 owned   scripts/glueops-dev.sh
 owned   scripts/glueops-sync-fixup.sh
 
