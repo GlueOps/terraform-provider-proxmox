@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.0](https://github.com/GlueOps/terraform-provider-proxmox/compare/v0.0.5...v0.1.0) (2026-11-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* proxmox_cloudinit_bootstrap requires file_name, a name ending in .iso that uses only letters, digits, '.', '_' and '-' and is unique on the datastore.
+
+### Features
+
+* require file_name on proxmox_cloudinit_bootstrap ([#17](https://github.com/GlueOps/terraform-provider-proxmox/issues/17)) ([626a7a2](https://github.com/GlueOps/terraform-provider-proxmox/commit/626a7a2183a1b1c578969d594d70f102846a78b3))
+
 ## [0.0.5](https://github.com/GlueOps/terraform-provider-proxmox/compare/v0.0.4...v0.0.5) (2026-11-12)
 
 
