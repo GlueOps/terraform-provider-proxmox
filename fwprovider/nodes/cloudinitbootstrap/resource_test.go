@@ -13,6 +13,7 @@ package cloudinitbootstrap_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -38,6 +39,9 @@ const bootstrapAddr = "proxmox_cloudinit_bootstrap.test"
 
 // seedSuffix makes the seed ISO name from the VM name, which is unique per subtest.
 const seedSuffix = "-seed.iso"
+
+// otherSuffix names an unrelated ISO the bootstrap must not touch.
+const otherSuffix = "-other.iso"
 
 // The guest needs network access to install qemu-guest-agent; the bridge defaults to vmbr0.
 func networkDevice() string {
@@ -134,7 +138,7 @@ func bootstrapConfig(extraRuncmd string, timeout int, extra string) string {
 resource "proxmox_cloudinit_bootstrap" "test" {
   vm_id        = proxmox_virtual_environment_vm.test.vm_id
   datastore_id = "local"
-  file_name    = "${proxmox_virtual_environment_vm.test.name}` + seedSuffix + `"
+  file_name    = "${proxmox_virtual_environment_vm.test.name}`+seedSuffix+`"
   user_data    = %s
   %s
 }
@@ -211,7 +215,7 @@ func checkCleanedUp(te *test.Environment, nodeName string) resource.TestCheckFun
 			return fmt.Errorf("ide0 of VM %d = %+v, want none", id, dev)
 		}
 
-		isos, err := seedISOs(ctx, te, nodeName, s.RootModule().Resources[bootstrapAddr].Primary.Attributes["file_name"])
+		isos, err := seedISOs(ctx, te, nodeName, testName(te)+seedSuffix)
 		if err != nil {
 			return err
 		}
@@ -260,8 +264,8 @@ func testVM(t *testing.T, te *test.Environment) (string, *vms.Client) {
 	return "", nil
 }
 
-// uploadStaleISO leaves a file under the seed ISO's name that no state knows about, like a killed run would.
-func uploadStaleISO(t *testing.T, te *test.Environment) {
+// uploadStaleISO leaves an ISO named fileName that no state knows about, like a killed run would.
+func uploadStaleISO(t *testing.T, te *test.Environment, fileName string) {
 	t.Helper()
 
 	nodeName, _ := testVM(t, te)
@@ -279,11 +283,40 @@ func uploadStaleISO(t *testing.T, te *test.Environment) {
 
 	_, err = nodes.Storage("local").APIUpload(context.Background(), &api.FileUploadRequest{
 		ContentType: storage.ContentTypeISO,
-		FileName:    testName(te) + seedSuffix,
+		FileName:    fileName,
 		File:        f,
 	}, t.TempDir())
 	require.NoError(t, err)
 	require.NoError(t, f.Close())
+}
+
+// checkISOExists verifies an ISO named fileName is still on the node's local datastore.
+func checkISOExists(te *test.Environment, nodeName, fileName string) resource.TestCheckFunc {
+	return func(*terraform.State) error {
+		isos, err := seedISOs(context.Background(), te, nodeName, fileName)
+		if err != nil {
+			return err
+		}
+
+		if len(isos) == 0 {
+			return fmt.Errorf("%s was deleted, but it isn't the seed ISO", fileName)
+		}
+
+		return nil
+	}
+}
+
+// deleteISO removes an ISO the test uploaded itself.
+func deleteISO(t *testing.T, te *test.Environment, fileName string) {
+	t.Helper()
+
+	nodes := te.NodeClient()
+	nodes.NodeName = te.NodeName
+
+	err := nodes.Storage("local").DeleteDatastoreFile(context.Background(), "local:iso/"+fileName).Err()
+	if err != nil && !errors.Is(err, api.ErrResourceDoesNotExist) {
+		t.Errorf("unable to delete %s: %v", fileName, err)
+	}
 }
 
 // requireSeedAttached checks a failed bootstrap left its seed ISO attached for debugging.
@@ -338,16 +371,21 @@ func TestAccResourceCloudInitBootstrap(t *testing.T) {
 				Config: strings.Replace(vmConfig(te, te.NodeName)+bootstrapConfig("", 0, ""),
 					`file_name    = "${proxmox_virtual_environment_vm.test.name}`+seedSuffix+`"`, `file_name = "seeds/a.iso"`, 1),
 				PlanOnly:    true,
-				ExpectError: regexp.MustCompile(`must be a plain file name ending in .iso`),
+				ExpectError: regexp.MustCompile(`must end in .iso and use only letters`),
 			}, {
 				// Create the VM alone first, so a stale seed ISO can be planted before the bootstrap.
 				Config: vmConfig(te, te.NodeName),
 			}, {
-				// The bootstrap must also remove a seed ISO that no state knows about.
-				PreConfig: func() { uploadStaleISO(t, te) },
-				Config:    cfg,
+				// The bootstrap must also remove a seed ISO that no state knows about, and leave other ISOs alone.
+				PreConfig: func() {
+					uploadStaleISO(t, te, testName(te)+seedSuffix)
+					uploadStaleISO(t, te, testName(te)+otherSuffix)
+					t.Cleanup(func() { deleteISO(t, te, testName(te)+otherSuffix) })
+				},
+				Config: cfg,
 				Check: resource.ComposeTestCheckFunc(
 					checkCleanedUp(te, te.NodeName),
+					checkISOExists(te, te.NodeName, testName(te)+otherSuffix),
 					resource.TestCheckResourceAttr(bootstrapAddr, "interface", "ide0"),
 					resource.TestCheckResourceAttr(bootstrapAddr, "timeout", "1800"),
 					resource.TestMatchResourceAttr(bootstrapAddr, "ipv4_addresses.lan0.#", regexp.MustCompile(`^[1-9]`)),

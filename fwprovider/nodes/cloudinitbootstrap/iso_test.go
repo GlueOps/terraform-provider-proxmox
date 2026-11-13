@@ -49,7 +49,7 @@ func TestISOFileNameRE(t *testing.T) {
 		assert.True(t, isoFileNameRE.MatchString(ok), ok)
 	}
 
-	for _, bad := range []string{"", ".iso", "seed.img", "seed.iso.yaml", "a/seed.iso", `a\seed.iso`, "my seed.iso", "seed.ISO"} {
+	for _, bad := range []string{"", ".iso", "seed.img", "seed.iso.yaml", "a/seed.iso", `a\seed.iso`, "my seed.iso", "seed.ISO", "a+b.iso", "a:b.iso", "é.iso"} {
 		assert.False(t, isoFileNameRE.MatchString(bad), bad)
 	}
 }

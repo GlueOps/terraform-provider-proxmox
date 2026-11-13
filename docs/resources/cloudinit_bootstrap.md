@@ -73,7 +73,7 @@ resource "proxmox_virtual_environment_vm" "example" {
 resource "proxmox_cloudinit_bootstrap" "example" {
   vm_id        = proxmox_virtual_environment_vm.example.vm_id
   datastore_id = "local"
-  file_name    = "example-seed.iso" # unique on the node
+  file_name    = "cloudinit-${proxmox_virtual_environment_vm.example.vm_id}.iso" # unique on the datastore
 
   user_data = <<-EOT
     #cloud-config
@@ -133,7 +133,7 @@ resource "proxmox_virtual_environment_vm" "multi_nic" {
 resource "proxmox_cloudinit_bootstrap" "multi_nic" {
   vm_id        = proxmox_virtual_environment_vm.multi_nic.vm_id
   datastore_id = "local"
-  file_name    = "multi-nic-seed.iso"
+  file_name    = "cloudinit-${proxmox_virtual_environment_vm.multi_nic.vm_id}.iso"
 
   user_data = <<-EOT
     #cloud-config
@@ -164,7 +164,7 @@ resource "proxmox_cloudinit_bootstrap" "multi_nic" {
 ### Required
 
 - `datastore_id` (String) The datastore on the VM's node to upload the temporary ISO to. It must allow `iso` content.
-- `file_name` (String) The file name of the temporary seed ISO on `datastore_id`. Must be a plain file name without path separators or whitespace, ending in `.iso`. Use a name unique on the node: an existing file with this name is replaced when the bootstrap runs and deleted afterwards.
+- `file_name` (String) The file name of the temporary seed ISO on `datastore_id`. It must end in `.iso` and use only letters, digits, `.`, `_` and `-` (Proxmox would rename other characters). Use a name no other ISO on the datastore has (across the cluster if it is shared): an existing file with this name is replaced when the bootstrap runs and deleted afterwards, even if another VM has it attached.
 - `user_data` (String, Sensitive) The `user-data` file contents, e.g. a `#cloud-config` document.
 - `vm_id` (Number) The VM to bootstrap. Its node is looked up at apply time.
 

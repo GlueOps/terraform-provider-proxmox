@@ -133,11 +133,15 @@ func (r *bootstrapResource) Schema(
 				Required:    true,
 			},
 			"file_name": schema.StringAttribute{
-				Description: "The file name of the temporary seed ISO on `datastore_id`. Must be a plain file name " +
-					"without path separators or whitespace, ending in `.iso`. Use a name unique on the node: an existing " +
-					"file with this name is replaced when the bootstrap runs and deleted afterwards.",
-				Required:   true,
-				Validators: []validator.String{stringvalidator.RegexMatches(isoFileNameRE, isoFileNameMsg)},
+				Description: "The file name of the temporary seed ISO on `datastore_id`. It must end in `.iso` and use " +
+					"only letters, digits, `.`, `_` and `-` (Proxmox would rename other characters). Use a name no other " +
+					"ISO on the datastore has (across the cluster if it is shared): an existing file with this name is " +
+					"replaced when the bootstrap runs and deleted afterwards, even if another VM has it attached.",
+				Required: true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtMost(255),
+					stringvalidator.RegexMatches(isoFileNameRE, isoFileNameMsg),
+				},
 			},
 			"interface": schema.StringAttribute{
 				Description: "The CD-ROM interface to attach the ISO to. Defaults to `ide0` " +
@@ -192,11 +196,11 @@ func (r *bootstrapResource) Configure(
 	r.client = cfg.Client
 }
 
-var isoFileNameRE = regexp.MustCompile(`^[^/\\\s]+\.iso$`)
+// isoFileNameRE matches the names the PVE upload API keeps as they are; it replaces other characters with "_".
+var isoFileNameRE = regexp.MustCompile(`^[A-Za-z0-9_.-]+\.iso$`)
 
-const isoFileNameMsg = "must be a plain file name ending in .iso, without path separators or whitespace"
+const isoFileNameMsg = "must end in .iso and use only letters, digits, '.', '_' and '-'"
 
-// seedVolumeID is the volume ID the seed ISO is uploaded as.
 func seedVolumeID(datastore, fileName string) string {
 	return datastore + ":" + storage.ContentTypeISO + "/" + fileName
 }
@@ -341,6 +345,8 @@ func (r *bootstrapResource) removeSeedISO(
 
 	contentType := storage.ContentTypeISO
 
+	// Listing first, because the file is usually already gone (before an upload, or destroying after a successful
+	// bootstrap), and a delete of a missing file fails as a task rather than with a not-found error.
 	files, err := datastoreClient.ListDatastoreFiles(ctx, &contentType)
 	if errors.Is(err, api.ErrResourceDoesNotExist) {
 		// No such datastore (e.g. a typo in a tainted state), so there is nothing to clean up and destroy must not block.
