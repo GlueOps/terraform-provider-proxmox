@@ -9,7 +9,8 @@ VMs, so never point the script or the tests at servers that run anything real.
 
 ## What you need
 
-- **Two Hetzner dedicated servers**, ordered in Robot, in the same location, each with 2 NVMe disks.
+- **Two Hetzner dedicated servers**, ordered in Robot, in the same location, each with exactly 2 disks. Prefer NVMe:
+  SATA hard disks work but are slow, and a new RAID 1 on large ones resyncs for hours. BIOS or UEFI boot both work.
 - **A Robot webservice user** (Robot → Settings → Web service and app settings) and the two servers' Robot numbers,
   in a file only you can read. The first server becomes `pve1`:
   ```sh
@@ -37,7 +38,7 @@ scripts/glueops-acc-lab.sh all        # about 15-20 minutes; or run the stages o
 | Stage | What it does | Time |
 | ----- | ------------ | ---- |
 | `rescue` | registers the lab key, boots both servers into Hetzner's rescue system (hardware reset) | 1-2 min |
-| `install` | `installimage`: Debian 13 on software RAID 1 (UEFI layout), reboots into it | 5-6 min |
+| `install` | `installimage`: Debian 13 on software RAID 1 (UEFI or BIOS layout, as rescue booted), reboots into it | 5-6 min |
 | `pve` | Proxmox VE 9 from the no-subscription repo; Proxmox kernel; key-only SSH | 8-10 min |
 | `network` | `vmbr1` on each node: 10.10.10.1/24, NAT to the internet, DHCP with dnsmasq | seconds |
 | `cluster` | `pve1` creates the cluster `glueops-acc`, `pve2` joins over SSH | 1 min |
@@ -86,9 +87,11 @@ You never need to open `testacc.env` or Robot to find a node.
 | Symptom | Cause and fix |
 | ------- | ------------- |
 | `install` stops with "isn't in rescue" on a re-run | A previous run already rebooted that node into Debian. Run `rescue install` to start the install over. |
-| `install`: installimage prints only `Cancelled.` | The real reason is in `/root/debug.txt` on the server (the script prints its error lines). `ESP missing`: the layout needs an EFI partition, which the script includes. |
-| A node doesn't come back after a reboot | These servers sometimes hang on a soft reboot. The script waits 8 minutes, then sends up to 2 hardware resets through Robot. If it still fails, rerun `rescue` and look at the server in Robot. |
+| `install`: installimage prints only `Cancelled.` | The real reason is in `/root/debug.txt` on the server (the script prints its error lines). `ESP missing`: installimage wants an EFI partition on a UEFI server; the script adds one when rescue booted UEFI, so rerun `install`. |
+| A node doesn't come back after a reboot | These servers sometimes hang on a soft reboot. The script waits 8 minutes, then sends up to 2 hardware resets through Robot. If it still fails, rerun `rescue` and look at the server in Robot. If it never boots its installed system while rescue always works, its firmware isn't booting the disks: a human asks Hetzner to check it, or swaps the server. |
 | Any stage: "Robot has no server …" | The servers in `LAB_SERVERS` were cancelled (or the numbers are wrong). Ordering servers costs money, so a human does it: they order two as described in [What you need](#what-you-need) and put their numbers in `LAB_SERVERS`. Then run `all`. |
+| Any stage: "LAB_SERVERS names server … twice" | Both entries are the same server, so every stage would run twice on one machine. Put the second server's number in `LAB_SERVERS`. |
+| `install`: "… has N disks" | The RAID 1 layout needs exactly 2 non-removable disks. Use a server with 2 disks. |
 | Any stage: "Robot request … failed" | Wrong or rotated Robot credentials in `~/.config/hetzner-robot.env`, or no network. |
 | `rescue` times out | Rescue mode may not have armed. Rerun the stage, which re-arms it. If it keeps failing, check the server's status in Robot. |
 | `cluster`: `Permission denied` writing `authorized_keys` | `/etc/pve` is read-only for a moment after `pvecm create`. The script waits for quorum; rerun the stage. |
