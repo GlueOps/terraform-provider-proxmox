@@ -66,6 +66,8 @@ load() {
 	[ -n "${LAB_SERVERS:-}" ] || die "set LAB_SERVERS (the two Robot server numbers, pve1 first) in $ROBOT_ENV"
 	read -r -a SERVERS <<<"$LAB_SERVERS"
 	[ ${#SERVERS[@]} = 2 ] || die "LAB_SERVERS must name exactly 2 servers"
+	# Otherwise both "nodes" are one machine, and the build hangs at its first reboot.
+	[ "${SERVERS[0]}" != "${SERVERS[1]}" ] || die "LAB_SERVERS names server ${SERVERS[0]} twice; it must be 2 different servers"
 	IPS=()
 	local s j
 	for s in "${SERVERS[@]}"; do
@@ -138,20 +140,27 @@ st_rescue() {
 st_install() {
 	for i in 0 1; do
 		on "$i" 'test -d /root/.oldroot/nfs/install' || die "${NAMES[$i]} isn't in rescue; run the rescue stage first"
+		# installimage needs an ESP exactly when rescue booted UEFI (it checks /sys/firmware/efi too); BIOS uses the MBR.
+		boot=$(on "$i" 'test -d /sys/firmware/efi && echo UEFI || echo BIOS') || die "${NAMES[$i]}: can't tell how it boots"
+		esp=
+		[ "$boot" = BIOS ] || esp='PART /boot/efi esp 256M'
+		# Servers come with NVMe or SATA disks.
+		read -r -a drives <<<"$(on "$i" 'lsblk -dnpo NAME,TYPE,RM' | awk '$2=="disk" && $3==0 {print $1}' | sort | tr '\n' ' ')"
+		[ ${#drives[@]} = 2 ] || die "${NAMES[$i]} has ${#drives[@]} disks (${drives[*]:-none}); the RAID 1 layout needs exactly 2"
 		on "$i" "cat > /tmp/setup.conf" <<EOF
-DRIVE1 /dev/nvme0n1
-DRIVE2 /dev/nvme1n1
+DRIVE1 ${drives[0]}
+DRIVE2 ${drives[1]}
 SWRAID 1
 SWRAIDLEVEL 1
 HOSTNAME ${NAMES[$i]}
-PART /boot/efi esp 256M
+${esp}
 PART /boot ext3 1024M
 PART / ext4 all
 IMAGE /root/.oldroot/nfs/install/../images/Debian-trixie-latest-amd64-base.tar.zst
 EOF
-		log "${NAMES[$i]}: installimage (about 2 minutes)"
-		# The servers boot UEFI, so the layout needs an ESP. installimage needs TERM even unattended; on failure the
-		# real reason is in /root/debug.txt, not in its output ("Cancelled.").
+		log "${NAMES[$i]}: installimage on ${drives[*]#/dev/}, $boot boot (about 2 minutes)"
+		# installimage needs TERM even unattended; on failure the real reason is in /root/debug.txt, not in its output
+		# ("Cancelled.").
 		on "$i" 'TERM=xterm /root/.oldroot/nfs/install/installimage -a -c /tmp/setup.conf >/tmp/installimage.log 2>&1' ||
 			{ on "$i" 'grep -E "ERROR|error" /root/debug.txt | tail -5'; die "${NAMES[$i]}: installimage failed"; }
 	done
