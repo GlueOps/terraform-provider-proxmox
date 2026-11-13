@@ -39,6 +39,7 @@ resource "proxmox_virtual_environment_vm" "example" {
 resource "proxmox_cloudinit_bootstrap" "example" {
   vm_id        = proxmox_virtual_environment_vm.example.vm_id
   datastore_id = "local"
+  file_name    = "example-seed.iso" # unique on the node
 
   user_data = <<-EOT
     #cloud-config
@@ -98,6 +99,7 @@ resource "proxmox_virtual_environment_vm" "multi_nic" {
 resource "proxmox_cloudinit_bootstrap" "multi_nic" {
   vm_id        = proxmox_virtual_environment_vm.multi_nic.vm_id
   datastore_id = "local"
+  file_name    = "multi-nic-seed.iso"
 
   user_data = <<-EOT
     #cloud-config

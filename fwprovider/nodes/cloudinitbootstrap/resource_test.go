@@ -36,6 +36,9 @@ const vmAddr = "proxmox_virtual_environment_vm.test"
 
 const bootstrapAddr = "proxmox_cloudinit_bootstrap.test"
 
+// seedSuffix makes the seed ISO name from the VM name, which is unique per subtest.
+const seedSuffix = "-seed.iso"
+
 // The guest needs network access to install qemu-guest-agent; the bridge defaults to vmbr0.
 func networkDevice() string {
 	bridge := os.Getenv("PROXMOX_VE_ACC_CLOUDINIT_BRIDGE")
@@ -131,6 +134,7 @@ func bootstrapConfig(extraRuncmd string, timeout int, extra string) string {
 resource "proxmox_cloudinit_bootstrap" "test" {
   vm_id        = proxmox_virtual_environment_vm.test.vm_id
   datastore_id = "local"
+  file_name    = "${proxmox_virtual_environment_vm.test.name}` + seedSuffix + `"
   user_data    = %s
   %s
 }
@@ -151,8 +155,8 @@ func vmID(s *terraform.State) (int, error) {
 	return id, nil
 }
 
-// seedISOs lists the seed ISOs of a VM on a node's local datastore.
-func seedISOs(ctx context.Context, te *test.Environment, nodeName string, id int) ([]string, error) {
+// seedISOs lists the ISOs named fileName on a node's local datastore.
+func seedISOs(ctx context.Context, te *test.Environment, nodeName, fileName string) ([]string, error) {
 	nodes := te.NodeClient()
 	nodes.NodeName = nodeName
 	ds := nodes.Storage("local")
@@ -167,7 +171,7 @@ func seedISOs(ctx context.Context, te *test.Environment, nodeName string, id int
 	var out []string
 
 	for _, f := range files {
-		if strings.HasPrefix(f.VolumeID, fmt.Sprintf("local:iso/cloudinit-%d-", id)) {
+		if f.VolumeID == "local:iso/"+fileName {
 			out = append(out, f.VolumeID)
 		}
 	}
@@ -207,7 +211,7 @@ func checkCleanedUp(te *test.Environment, nodeName string) resource.TestCheckFun
 			return fmt.Errorf("ide0 of VM %d = %+v, want none", id, dev)
 		}
 
-		isos, err := seedISOs(ctx, te, nodeName, id)
+		isos, err := seedISOs(ctx, te, nodeName, s.RootModule().Resources[bootstrapAddr].Primary.Attributes["file_name"])
 		if err != nil {
 			return err
 		}
@@ -220,13 +224,19 @@ func checkCleanedUp(te *test.Environment, nodeName string) resource.TestCheckFun
 	}
 }
 
+// testName is the subtest's VM name.
+func testName(te *test.Environment) string {
+	// RenderConfig prepends the provider block; the name is the last line.
+	rendered := strings.Split(strings.TrimSpace(te.RenderConfig("{{.TestName}}")), "\n")
+
+	return strings.TrimSpace(rendered[len(rendered)-1])
+}
+
 // testVM looks up the test VM by name, for steps that need it before it is in state or after a failed apply.
 func testVM(t *testing.T, te *test.Environment) (string, *vms.Client) {
 	t.Helper()
 
-	// RenderConfig prepends the provider block; the name is the last line.
-	rendered := strings.Split(strings.TrimSpace(te.RenderConfig("{{.TestName}}")), "\n")
-	name := strings.TrimSpace(rendered[len(rendered)-1])
+	name := testName(te)
 
 	// A just-created VM shows up in the cluster resources without its name until pvestatd's next update.
 	for range 10 {
@@ -250,11 +260,11 @@ func testVM(t *testing.T, te *test.Environment) (string, *vms.Client) {
 	return "", nil
 }
 
-// uploadStaleISO leaves a seed ISO for the test VM that no state knows about, like a killed run would.
+// uploadStaleISO leaves a file under the seed ISO's name that no state knows about, like a killed run would.
 func uploadStaleISO(t *testing.T, te *test.Environment) {
 	t.Helper()
 
-	nodeName, vm := testVM(t, te)
+	nodeName, _ := testVM(t, te)
 
 	f, err := os.CreateTemp(t.TempDir(), "stale-*.iso")
 	require.NoError(t, err)
@@ -269,7 +279,7 @@ func uploadStaleISO(t *testing.T, te *test.Environment) {
 
 	_, err = nodes.Storage("local").APIUpload(context.Background(), &api.FileUploadRequest{
 		ContentType: storage.ContentTypeISO,
-		FileName:    fmt.Sprintf("cloudinit-%d-stale.iso", vm.VMID),
+		FileName:    testName(te) + seedSuffix,
 		File:        f,
 	}, t.TempDir())
 	require.NoError(t, err)
@@ -287,11 +297,10 @@ func requireSeedAttached(t *testing.T, te *test.Environment) {
 
 	dev := cfg.StorageDevices["ide0"]
 	require.NotNil(t, dev)
-	require.True(t, strings.HasPrefix(dev.FileVolume, fmt.Sprintf("local:iso/cloudinit-%d-", vm.VMID)),
-		"ide0 = %s, want the seed ISO", dev.FileVolume)
+	require.Equal(t, "local:iso/"+testName(te)+seedSuffix, dev.FileVolume, "ide0 must hold the seed ISO")
 }
 
-// requireSeedRemoved checks the VM's drive is empty and none of its seed ISOs is left.
+// requireSeedRemoved checks the VM's drive is empty and the seed ISO is gone.
 func requireSeedRemoved(t *testing.T, te *test.Environment) {
 	t.Helper()
 
@@ -304,7 +313,7 @@ func requireSeedRemoved(t *testing.T, te *test.Environment) {
 	require.NotNil(t, dev)
 	require.Equal(t, "none", dev.FileVolume)
 
-	isos, err := seedISOs(context.Background(), te, nodeName, vm.VMID)
+	isos, err := seedISOs(context.Background(), te, nodeName, testName(te)+seedSuffix)
 	require.NoError(t, err)
 	require.Empty(t, isos)
 }
@@ -325,6 +334,11 @@ func TestAccResourceCloudInitBootstrap(t *testing.T) {
 				Config:      vmConfig(te, te.NodeName) + bootstrapConfig("", -1, ""),
 				PlanOnly:    true,
 				ExpectError: regexp.MustCompile(`must be at least 1`),
+			}, {
+				Config: strings.Replace(vmConfig(te, te.NodeName)+bootstrapConfig("", 0, ""),
+					`file_name    = "${proxmox_virtual_environment_vm.test.name}`+seedSuffix+`"`, `file_name = "seeds/a.iso"`, 1),
+				PlanOnly:    true,
+				ExpectError: regexp.MustCompile(`must be a plain file name ending in .iso`),
 			}, {
 				// Create the VM alone first, so a stale seed ISO can be planted before the bootstrap.
 				Config: vmConfig(te, te.NodeName),
