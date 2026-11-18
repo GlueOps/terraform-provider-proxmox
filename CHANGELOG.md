@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.0](https://github.com/GlueOps/terraform-provider-proxmox/compare/v0.1.0...v0.2.0) (2026-11-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* proxmox_cloudinit_bootstrap fails instead of replacing an existing file named file_name, deletes only the ISO it uploaded (recorded in seed_file_id), and fails the apply when user_data, meta_data, network_config or vendor_data change after the bootstrap; replace the VM or add them to ignore_changes. file_name is optional again and defaults to cloudinit-bootstrap-<vm_id>.iso.
+
+### Features
+
+* only remove seed ISOs the bootstrap uploaded, and reject seed content changes ([#20](https://github.com/GlueOps/terraform-provider-proxmox/issues/20)) ([a20766e](https://github.com/GlueOps/terraform-provider-proxmox/commit/a20766e959f5a19ef6137ab6c9f8d917eed1ba81))
+
 ## [0.1.0](https://github.com/GlueOps/terraform-provider-proxmox/compare/v0.0.5...v0.1.0) (2026-11-13)
 
 
