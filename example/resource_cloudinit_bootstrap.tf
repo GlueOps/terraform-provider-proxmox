@@ -43,7 +43,6 @@ resource "proxmox_virtual_environment_vm" "cloudinit_bootstrap" {
 resource "proxmox_cloudinit_bootstrap" "example" {
   vm_id        = proxmox_virtual_environment_vm.cloudinit_bootstrap.vm_id
   datastore_id = "local"
-  file_name    = "cloudinit-bootstrap-example-seed.iso"
 
   user_data = <<-EOT
     #cloud-config
@@ -64,6 +63,7 @@ resource "proxmox_cloudinit_bootstrap" "example" {
 
   lifecycle {
     replace_triggered_by = [proxmox_virtual_environment_vm.cloudinit_bootstrap.id]
+    ignore_changes       = [user_data, meta_data, network_config, vendor_data]
   }
 }
 

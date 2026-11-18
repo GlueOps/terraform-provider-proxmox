@@ -260,6 +260,7 @@ found two releases for the tag, delete the draft whose id isn't the run's `relea
 
 Commit rules per branch are in AGENTS.md. Beyond those:
 
-- **Meant for bpg:** open the PR against bpg from a branch off `origin/main`, then merge the same commits into a fork
-  branch off `glueops/main`.
+- **Meant for bpg:** open the PR against bpg from a branch off `origin/main`, then cherry-pick the same commits onto a
+  fork branch off `glueops/main`. Don't merge the bpg branch: once it has merged bpg's `main`, that would bring in
+  upstream commits that aren't in a tagged release.
 - **Touching another upstream file:** add it to the allowlist as `feature`, and expect to resolve it on syncs.

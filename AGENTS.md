@@ -92,6 +92,10 @@ These are settled. Don't re-raise them in reviews.
 - Our versions are our own, starting at 0.0.1 and managed by release-please. Upstream commits that a sync brings in may drive bumps. `bump-minor-pre-major` is on.
 - The Go module path stays `github.com/bpg/terraform-provider-proxmox`, so imports are never rewritten. Renaming it would conflict on every sync.
 - The `GetFileFromAgent` helper stays in `proxmox/nodes/vms`, the same as in bpg PR #3260.
+- `proxmox_cloudinit_bootstrap` records its uploaded ISO in the `seed_file_id` state attribute, not in private state:
+  Terraform and OpenTofu don't pass a tainted object's private state to Delete, so a retry couldn't find the ISO.
+- A seed content change fails in Update (at apply), not at plan time: a plan-time error would also block `-replace` and
+  `replace_triggered_by`, which is how such a change is applied.
 - Docs and examples are rebranded to `registry.terraform.io/GlueOps/proxmox` by the fixup script, and upstream's `>= x.y.z` lower bounds become `>= 0.0.1`. `example/` is not rebranded, because its `.tfrc` dev overrides are keyed to `bpg/proxmox`.
 - There are no required status checks beyond the org's. People and agents check that every check is green before merging.
 - The release-please setup deliberately differs from the GlueOps release-please skill's fleet convention (workflow name,

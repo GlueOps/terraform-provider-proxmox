@@ -70,7 +70,7 @@ scripts/glueops-dev.sh ./testacc TestAccResourceCloudInitBootstrap
 scripts/glueops-acc-lab.sh leftovers     # exits 0 if the tests left nothing behind
 ```
 
-All 3 subtests must report `--- PASS`. They take about 2 minutes and clean up after themselves.
+All 3 subtests must report `--- PASS`. They take about 2-3 minutes and clean up after themselves.
 
 ## Getting at the nodes
 

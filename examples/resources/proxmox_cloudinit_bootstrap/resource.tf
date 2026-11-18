@@ -39,7 +39,6 @@ resource "proxmox_virtual_environment_vm" "example" {
 resource "proxmox_cloudinit_bootstrap" "example" {
   vm_id        = proxmox_virtual_environment_vm.example.vm_id
   datastore_id = "local"
-  file_name    = "cloudinit-${proxmox_virtual_environment_vm.example.vm_id}.iso" # unique on the datastore
 
   user_data = <<-EOT
     #cloud-config
@@ -49,8 +48,16 @@ resource "proxmox_cloudinit_bootstrap" "example" {
   EOT
 
   lifecycle {
-    # Bootstrap a replaced VM again.
+    # Bootstrap a replaced VM again. Use the VM's id: the whole VM would also
+    # trigger on in-place VM updates.
     replace_triggered_by = [proxmox_virtual_environment_vm.example.id]
+
+    # cloud-init applies the seed only on a VM's first boot, so a content change
+    # fails the apply. Ignoring it keeps existing VMs as they are; VMs created or
+    # replaced later get the current content. To apply a change to a VM, replace it
+    # by applying with -replace=proxmox_virtual_environment_vm.example (quote
+    # addresses with keys, e.g. -replace='proxmox_virtual_environment_vm.vm["a"]').
+    ignore_changes = [user_data, meta_data, network_config, vendor_data]
   }
 }
 
@@ -99,7 +106,6 @@ resource "proxmox_virtual_environment_vm" "multi_nic" {
 resource "proxmox_cloudinit_bootstrap" "multi_nic" {
   vm_id        = proxmox_virtual_environment_vm.multi_nic.vm_id
   datastore_id = "local"
-  file_name    = "cloudinit-${proxmox_virtual_environment_vm.multi_nic.vm_id}.iso"
 
   user_data = <<-EOT
     #cloud-config
@@ -120,5 +126,7 @@ resource "proxmox_cloudinit_bootstrap" "multi_nic" {
 
   lifecycle {
     replace_triggered_by = [proxmox_virtual_environment_vm.multi_nic.id]
+    # network_config follows the VM's NICs, so adding one would change it; keep the VM as it is.
+    ignore_changes = [user_data, meta_data, network_config, vendor_data]
   }
 }
