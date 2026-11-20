@@ -140,7 +140,8 @@ assets can be downloaded.
    on the release PR in this exact format, and never paste raw output (it can contain lab addresses):
    ```text
    Release gate for X.Y.Z at <full SHA of glueops/main>
-   acceptance: --- PASS ×3 (TestAccResourceCloudInitBootstrap subtests)
+   lab: local nested, pve-manager <version>        (or: hetzner, pve-manager <version>)
+   acceptance: --- PASS ×N (TestAccResourceCloudInitBootstrap subtests; N = every subtest that ran)
    leftovers: none
    ```
    If any subtest fails or doesn't run, don't merge: fix it, or report the failure on the release PR, in a few words
@@ -177,10 +178,10 @@ assets can be downloaded.
 
 ### Release gate
 
-The gate runs the fork's acceptance tests against a dedicated two-node PVE lab on Hetzner. It runs locally, never in
-GitHub, so no PVE credentials ever reach the repo. [.glueops/release-gate-lab.md](.glueops/release-gate-lab.md) is the
-lab's runbook: what it needs (the Robot credentials in `~/.config/hetzner-robot.env`), how to rebuild it, and what to
-do when a step fails.
+The gate runs the fork's acceptance tests against a dedicated two-node PVE lab: by default the local one (nested KVM
+VMs in a Docker container on this machine), or the Hetzner one as a fallback. It runs locally, never in GitHub, so no
+PVE credentials ever reach the repo. [.glueops/release-gate-lab.md](.glueops/release-gate-lab.md) is the lab's
+runbook: what each lab needs, how to build it, when to fall back to Hetzner, and what to do when a step fails.
 
 1. Test the code that will be released, the fork's `main`:
    ```sh
@@ -188,16 +189,19 @@ do when a step fails.
    ```
    Its full SHA goes in the gate comment. That's the released code, not the release PR's head commit, which only
    bumps version strings.
-2. Make sure the lab is up: `scripts/glueops-acc-lab.sh check`. If it fails, it says which fix to try: either the
-   quick one (`firewall token check`, seconds) when the nodes are up, or a rebuild (`scripts/glueops-acc-lab.sh all`,
-   15-20 minutes; it wipes the two lab servers, which hold nothing else) when they're down or gone.
-3. Run the tests, then check that nothing was left behind:
+2. Make sure the lab is up: `scripts/glueops-acc-lab.sh check`. If it fails, it says which fix to try: for the local
+   lab, `up` when it's stopped, or `all` (about 15 minutes) when there is none; for Hetzner (`LAB_BACKEND=hetzner`),
+   the quick fix (`firewall token check`) when the nodes are up, or a rebuild (`all`, 15-20 minutes; it wipes the two
+   lab servers) when they're down or gone.
+3. Run the tests, then check that nothing was left behind (on Hetzner, with `LAB_BACKEND=hetzner` set for every
+   command):
    ```sh
-   scripts/glueops-dev.sh ./testacc TestAccResourceCloudInitBootstrap
+   scripts/glueops-acc-lab.sh test
    scripts/glueops-acc-lab.sh leftovers
    ```
-4. All 3 subtests must report `--- PASS`. If only 2 ran, `testacc.env` is missing the second node: rerun
-   `scripts/glueops-acc-lab.sh token`.
+4. Every subtest must report `--- PASS`, including the migration one, which needs both nodes. If it's skipped,
+   `testacc.env` is missing the second node: rerun `scripts/glueops-acc-lab.sh token`. A subtest that fails only on the
+   local lab, with a timeout, blocks the release until it passes on Hetzner (see the runbook).
 
 ### Emergency release
 

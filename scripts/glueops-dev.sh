@@ -6,6 +6,9 @@
 #   scripts/glueops-dev.sh go test ./fwprovider/nodes/cloudinitbootstrap/...
 #   scripts/glueops-dev.sh lint          # golangci-lint at the Makefile's GOLANGCI_LINT_VERSION
 #   scripts/glueops-dev.sh ./testacc TestAccResourceCloudInitBootstrap   # needs testacc.env; see FORK.md
+#
+# GLUEOPS_DEV_NETWORK, if set, is passed to docker run --network (scripts/glueops-acc-lab.sh test sets it to the local
+# lab's container, whose network is the only place the lab's node IPs exist).
 set -euo pipefail
 
 TERRAFORM_VERSION=1.13.3
@@ -31,6 +34,7 @@ run_args=(
   # The repo is owned by the host user; without this git (and go's VCS stamping) refuses to run.
   -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*'
 )
+[ -z "${GLUEOPS_DEV_NETWORK:-}" ] || run_args+=(--network "$GLUEOPS_DEV_NETWORK")
 
 # Our owned files (release workflow, release config, FORK.md, AGENTS.md...) are read-only in the container too.
 while read -r owned; do
