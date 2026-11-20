@@ -26,11 +26,12 @@ scripts/glueops-dev.sh go test ./...
 scripts/glueops-dev.sh lint                      # golangci-lint at the Makefile's version
 scripts/glueops-dev.sh make docs                 # regenerate docs; CI fails if this leaves a diff
 scripts/glueops-sync-fixup.sh --self-test        # after changing fork tooling
-scripts/glueops-acc-lab.sh all                   # rebuild the release gate lab (wipes the 2 lab servers); runs on the host
+scripts/glueops-acc-lab.sh all                   # build the local release gate lab (about 15 min); runs on the host
+scripts/glueops-acc-lab.sh down                  # stop it cleanly when you're done (it holds about 20 GB of RAM)
 ```
 
-The release gate (FORK.md) runs acceptance tests against a Hetzner lab; `.glueops/release-gate-lab.md` covers building
-it and what to do when a stage fails.
+The release gate (FORK.md) runs acceptance tests against a local nested-KVM lab, with a Hetzner lab as the fallback;
+`.glueops/release-gate-lab.md` covers building them, when to fall back, and what to do when a stage fails.
 
 Don't use `make lint` or `make build` on the host: they install or run tools outside Docker.
 
@@ -64,16 +65,17 @@ Releases go through release-please: merging work to `main` opens a `chore(main):
 release PR is merged, the release gate must pass.** FORK.md has the steps ("Releasing" and "Release gate"); in short:
 
 1. `git fetch glueops && git switch --detach glueops/main`
-2. `scripts/glueops-acc-lab.sh check`. If it fails, do what it says: the quick fix (`firewall token check`) when the
-   nodes are up, or a rebuild (`scripts/glueops-acc-lab.sh all`) when they're down. A rebuild needs the Robot
-   credentials and server numbers in `~/.config/hetzner-robot.env`; if they're missing, or the script says Robot has
-   no such server, stop and ask a human. Never order or cancel servers yourself.
-3. `scripts/glueops-dev.sh ./testacc TestAccResourceCloudInitBootstrap`: all 3 subtests must PASS.
+2. `scripts/glueops-acc-lab.sh check`. If it fails, do what it says: `up` when the local lab is stopped, `all` when
+   there is none. Use the Hetzner lab (`LAB_BACKEND=hetzner`) only as the runbook says; it needs the Robot credentials
+   and server numbers in `~/.config/hetzner-robot.env`. If they're missing, or the script says Robot has no such
+   server, stop and ask a human. Never order or cancel servers yourself.
+3. `scripts/glueops-acc-lab.sh test`: every subtest must PASS.
 4. `scripts/glueops-acc-lab.sh leftovers`: it must report none.
 5. Post the gate result on the release PR in FORK.md's fixed format, merge (an admin, with `--admin --squash`), then
    verify the release as FORK.md says.
 
-If any step fails, don't merge the release PR. Never print the Robot credentials or `testacc.env`.
+If any step fails, don't merge the release PR. Never print the Robot credentials or `testacc.env`. Stop the local lab
+with `scripts/glueops-acc-lab.sh down` when you're done.
 
 ## Code conventions (upstream's, summarised)
 
@@ -106,5 +108,12 @@ These are settled. Don't re-raise them in reviews.
 - Never delete the `feat/cloudinit-iso` branch: it's the head of bpg PR #3260, and deleting it closes that PR. The
   `protect-upstream-pr-branch` ruleset blocks deletion.
 - Actions are pinned to commit SHAs by hand. `sha_pinning_required` is off, and Renovate is disabled in the fork.
-- The release gate is the fork's acceptance tests against the Hetzner lab. It runs locally and never in GitHub, so no PVE
-  credentials go into the repo. Consumers such as the GlueKube module are tested separately, not as part of this gate.
+- The release gate is the fork's acceptance tests against the local nested-KVM lab, with the Hetzner lab as the fallback
+  (the runbook says when). It runs locally and never in GitHub, so no PVE credentials go into the repo. Consumers such
+  as the GlueKube module are tested separately, not as part of this gate.
+- The local lab is one script with a backend switch, not a second script; `local` is the default, so the stages that
+  wipe Hetzner servers (`rescue`, `install`) only run with an explicit `LAB_BACKEND=hetzner`.
+- The local lab's container is never privileged, never gets the Docker socket, host networking or published ports: it
+  runs with `--cap-drop ALL --cap-add NET_ADMIN`, `no-new-privileges`, and only `/dev/kvm` and `/dev/net/tun`.
+- The local lab's disks use `cache=unsafe` for speed. A crash or killed container can corrupt them; the fix is
+  `destroy` and `all` (about 15 minutes), which we accept for a disposable lab.
